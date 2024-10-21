@@ -3,7 +3,8 @@
 #include "dxgi.h"
 #include <Windows.h>
 #include "imgui.h"
-
+#include "imgui_impl_win32.h"
+#include "imgui_impl_dx12.h"
 using namespace Microsoft::WRL;
 LRESULT CALLBACK
 MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -41,12 +42,28 @@ bool Application::Init(HINSTANCE hinstance)
 	CreateRtvAndDsvDescHeap();
 
 	OnResize();
-
 	return true;
 }
 
 int Application::Run()
 {
+	// Setup Dear ImGui context
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
+	ImGuiIO& io = ImGui::GetIO();
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;         // IF using Docking Branch
+
+	/*// Setup Platform/Renderer backends
+	ImGui_ImplWin32_Init(mhMainWindow);
+	ImGui_ImplDX12_Init(md3dDevice, 2, mBackBufferFormat,
+		YOUR_SRV_DESC_HEAP,
+		// You'll need to designate a descriptor from your descriptor heap for Dear ImGui to use internally for its font texture's SRV
+		YOUR_CPU_DESCRIPTOR_HANDLE_FOR_FONT_SRV,
+		YOUR_GPU_DESCRIPTOR_HANDLE_FOR_FONT_SRV);*/
+
+
 	MSG msg = { 0 };
 
 	while (msg.message != WM_QUIT)
@@ -61,7 +78,7 @@ int Application::Run()
 			if (!mPaused)
 			{
 				//CalculateFrameStats();
-				//Update(mTimer);
+				Update();
 				Draw();
 			}
 			else
@@ -71,12 +88,25 @@ int Application::Run()
 		}
 	}
 
+	/*ImGui_ImplDX12_Shutdown();
+	ImGui_ImplWin32_Shutdown();*/
+	ImGui::DestroyContext();
+
 	return (int)msg.wParam;
 }
 
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 LRESULT Application::MsgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
+	if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam))
+		return true;
 
+	switch(msg)
+	{
+	case WM_DESTROY:
+		PostQuitMessage(0);
+		return 0;
+	}
 	return DefWindowProc(hwnd, msg, wParam, lParam);
 }
 
@@ -169,6 +199,11 @@ void Application::OnResize()
 }
 
 
+void Application::DrawImGui()
+{
+	/*ImGui::Render();
+	ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), mCommandList.Get());*/
+}
 
 bool Application::CreateMainWindow()
 {

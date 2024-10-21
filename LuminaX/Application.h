@@ -1,6 +1,6 @@
 #pragma once
 #include <dxgi1_4.h>
-#include <wrl/client.h>
+#include <wrl.h>
 #include "directx//d3d12.h"
 
 class Application
@@ -10,13 +10,17 @@ public:
 	~Application();
 	static Application* Get();
 
-	bool Init(HINSTANCE hinstance);
+	virtual bool Init(HINSTANCE hinstance);
 	int Run();
 	virtual LRESULT MsgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 protected:
 	void FlushCommandQueue();
 	void OnResize();
+
+	virtual void Update() = 0;
 	virtual void Draw() = 0;
+
+	void DrawImGui();
 
 	bool CreateMainWindow();
 	bool CreateDevice();
