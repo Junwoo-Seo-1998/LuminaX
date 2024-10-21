@@ -75,6 +75,7 @@ public:
 	virtual bool Init(HINSTANCE hinstance) override;
 
 private:
+	virtual void OnResize() override;
 	virtual void Update() override;
 	virtual void Draw() override;
 	
@@ -93,6 +94,7 @@ private:
 	void BuildRenderItems();
 
 	void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems);
+
 
 private:
 	std::vector<std::unique_ptr<FrameResource>> mFrameResources;
@@ -119,4 +121,8 @@ private:
 	DirectX::XMFLOAT3 mEyePos = { 0.0f, 0.0f, 0.0f };
 	DirectX::XMFLOAT4X4 mView = GraphicsUtil::Identity4x4();
 	DirectX::XMFLOAT4X4 mProj = GraphicsUtil::Identity4x4();
+
+	float mTheta = 1.5f * DirectX::XM_PI;
+	float mPhi = 0.2f * DirectX::XM_PI;
+	float mRadius = 15.0f;
 };

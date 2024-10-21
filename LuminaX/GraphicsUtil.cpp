@@ -2,6 +2,7 @@
 #include <d3dcompiler.h>
 #include <filesystem>
 #include <Windows.h>
+#include <comdef.h>
 
 Microsoft::WRL::ComPtr<ID3DBlob> GraphicsUtil::CompileShader(const std::wstring& fileName,
                                                              const D3D_SHADER_MACRO* defines, const std::string& entryPoint, const std::string& target)
@@ -34,4 +35,17 @@ DirectX::XMFLOAT4X4 GraphicsUtil::Identity4x4()
 		0.0f, 0.0f, 0.0f, 1.0f);
 
 	return I;
+}
+
+DxException::DxException(HRESULT hr, const std::wstring& functionName, const std::wstring& filename, int lineNumber)
+	: ErrorCode(hr), FunctionName(functionName), Filename(filename), LineNumber(lineNumber)
+{}
+
+std::wstring DxException::ToString() const
+{
+	// 에러 코드에 대한 설명을 가져옵니다.
+	_com_error err(ErrorCode);
+	std::wstring msg = err.ErrorMessage();
+
+	return FunctionName + L" failed in " + Filename + L"; line " + std::to_wstring(LineNumber) + L"; error: " + msg;
 }

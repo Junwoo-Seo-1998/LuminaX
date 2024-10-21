@@ -15,7 +15,7 @@ public:
 	virtual LRESULT MsgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 protected:
 	void FlushCommandQueue();
-	void OnResize();
+	virtual void OnResize();
 
 	virtual void Update() = 0;
 	virtual void Draw() = 0;

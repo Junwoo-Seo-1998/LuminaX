@@ -46,6 +46,13 @@ bool DemoApp::Init(HINSTANCE hinstance)
 	return true;
 }
 
+void DemoApp::OnResize()
+{
+	Application::OnResize();
+	XMMATRIX P = XMMatrixPerspectiveFovLH(0.25f * DirectX::XM_PI, (float)mWidth/mHeight , 1.0f, 1000.0f);
+	XMStoreFloat4x4(&mProj, P);
+}
+
 void DemoApp::Update()
 {
 	UpdateCamera();
@@ -71,9 +78,9 @@ void DemoApp::Update()
 void DemoApp::Draw()
 {
 	auto cmdListAlloc = mCurrFrameResource->CmdListAlloc;
-	cmdListAlloc->Reset();
+	ThrowIfFailed(cmdListAlloc->Reset());
 	
-	mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque"].Get());
+	mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque_wireframe"].Get());
 
 
 	mCommandList->RSSetViewports(1, &mScreenViewport);
@@ -131,8 +138,13 @@ void DemoApp::Draw()
 
 void DemoApp::UpdateCamera()
 {
+	// 구 좌표계를 카타시안 좌표계로 변환합니다.
+	mEyePos.x = mRadius * sinf(mPhi) * cosf(mTheta);
+	mEyePos.z = mRadius * sinf(mPhi) * sinf(mTheta);
+	mEyePos.y = mRadius * cosf(mPhi);
+
 	// 뷰 메트릭스를 계산합니다.
-	XMVECTOR pos = XMVectorSet(mEyePos.x, mEyePos.y, 10.f, 1.0f);
+	XMVECTOR pos = XMVectorSet(mEyePos.x, mEyePos.y, mEyePos.z, 1.0f);
 	XMVECTOR target = XMVectorZero();
 	XMVECTOR up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
 
@@ -296,9 +308,10 @@ void DemoApp::BuildShaderAndInputLayout()
 	mVSByteCode = GraphicsUtil::CompileShader(L"Shaders/color.hlsl", nullptr, "VS", "vs_5_0");
 	mPSByteCode = GraphicsUtil::CompileShader(L"Shaders/color.hlsl", nullptr, "PS", "ps_5_0");
 
-	mInputLayout = {
-		{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0,0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-		{"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}
+	mInputLayout =
+	{
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0,  0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+		{ "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}
 	};
 }
 
@@ -344,8 +357,8 @@ void DemoApp::BuildShapeGeometry()
 	}
 
 	std::vector<uint16_t> indices;
-	indices.insert(indices.end(), box.GetIndices16().begin(), box.GetIndices16().end());
-	indices.insert(indices.end(), sphere.GetIndices16().begin(), sphere.GetIndices16().end());
+	indices.insert(indices.end(), std::begin(box.GetIndices16()), std::end(box.GetIndices16()));
+	indices.insert(indices.end(), std::begin(sphere.GetIndices16()), std::end(sphere.GetIndices16()));
 
 	const UINT vbByteSize = (UINT)vertices.size() * sizeof(Vertex);
 	const UINT ibByteSize = (UINT)indices.size() * sizeof(uint16_t);
@@ -374,7 +387,7 @@ void DemoApp::BuildShapeGeometry()
 	mGeometries[geo->Name] = std::move(geo);
 }
 
-void DemoApp::BuildPSO()
+void DemoApp::	BuildPSO()
 {
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC opaquePSODesc;
 
@@ -421,7 +434,7 @@ void DemoApp::BuildFrameResources()
 void DemoApp::BuildRenderItems()
 {
 	auto boxRitem = std::make_unique<RenderItem>();
-	XMStoreFloat4x4(&boxRitem->World, XMMatrixScaling(2.0f, 2.0f, 2.0f) * XMMatrixTranslation(0.0f, 0.5f, 0.0f));
+	XMStoreFloat4x4(&boxRitem->World, XMMatrixScaling(2.0f, 2.0f, 2.0f) * XMMatrixTranslation(0.0f, 0.5f, -3.0f));
 	boxRitem->ObjCBIndex = 0;
 	boxRitem->Geo = mGeometries["shapeGeo"].get();
 	boxRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
@@ -430,7 +443,14 @@ void DemoApp::BuildRenderItems()
 	boxRitem->BaseVertexLocation = boxRitem->Geo->DrawArgs["box"].BaseVertexLocation;
 	mAllRitems.push_back(std::move(boxRitem));
 
-
+	auto gridRitem = std::make_unique<RenderItem>();
+	gridRitem->ObjCBIndex = 1;
+	gridRitem->Geo = mGeometries["shapeGeo"].get();
+	gridRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	gridRitem->IndexCount = gridRitem->Geo->DrawArgs["sphere"].IndexCount;
+	gridRitem->StartIndexLocation = gridRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
+	gridRitem->BaseVertexLocation = gridRitem->Geo->DrawArgs["sphere"].BaseVertexLocation;
+	mAllRitems.push_back(std::move(gridRitem));
 
 	// 모든 렌더 아이템들은 불투명합니다. 일단은..
 	for (auto& e : mAllRitems)
