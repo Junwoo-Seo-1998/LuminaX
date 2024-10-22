@@ -48,12 +48,12 @@ bool Application::Init(HINSTANCE hinstance)
 int Application::Run()
 {
 	// Setup Dear ImGui context
-	IMGUI_CHECKVERSION();
+	/*IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
 	ImGuiIO& io = ImGui::GetIO();
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
-	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;         // IF using Docking Branch
+	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;         // IF using Docking Branch*/
 
 	/*// Setup Platform/Renderer backends
 	ImGui_ImplWin32_Init(mhMainWindow);
@@ -90,7 +90,7 @@ int Application::Run()
 
 	/*ImGui_ImplDX12_Shutdown();
 	ImGui_ImplWin32_Shutdown();*/
-	ImGui::DestroyContext();
+	//ImGui::DestroyContext();
 
 	return (int)msg.wParam;
 }

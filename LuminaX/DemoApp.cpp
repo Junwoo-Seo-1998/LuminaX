@@ -27,7 +27,8 @@ bool DemoApp::Init(HINSTANCE hinstance)
 	if (!Application::Init(hinstance))
 		return false;
 
-	mCommandList->Reset(mCommandListAlloc.Get(), nullptr);
+	// 초기화 명령들을 기록하기 위해 커맨드 리스트를 리셋합니다.
+	ThrowIfFailed(mCommandList->Reset(mCommandListAlloc.Get(), nullptr));
 
 	BuildRootSignature();
 	BuildShaderAndInputLayout();
@@ -38,11 +39,14 @@ bool DemoApp::Init(HINSTANCE hinstance)
 	BuildConstantBuffers();
 	BuildPSO();
 
-	mCommandList->Close();
+	// 초기화 명령들을 실행시킵니다.
+	ThrowIfFailed(mCommandList->Close());
 	ID3D12CommandList* cmdLists[] = { mCommandList.Get() };
 	mCommandQueue->ExecuteCommandLists(1, cmdLists);
 
+	// 초기화가 종료될 때가지 기다립니다.
 	FlushCommandQueue();
+
 	return true;
 }
 
@@ -66,7 +70,7 @@ void DemoApp::Update()
 	if (mCurrFrameResource->Fence != 0 && mFence->GetCompletedValue() < mCurrFrameResource->Fence)
 	{
 		HANDLE eventHandle = CreateEventEx(nullptr, nullptr, 0, EVENT_ALL_ACCESS);
-		mFence->SetEventOnCompletion(mCurrFrameResource->Fence, eventHandle);
+		ThrowIfFailed(mFence->SetEventOnCompletion(mCurrFrameResource->Fence, eventHandle));
 		WaitForSingleObject(eventHandle, INFINITE);
 		CloseHandle(eventHandle);
 	}
@@ -78,53 +82,69 @@ void DemoApp::Update()
 void DemoApp::Draw()
 {
 	auto cmdListAlloc = mCurrFrameResource->CmdListAlloc;
-	ThrowIfFailed(cmdListAlloc->Reset());
-	
-	mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque_wireframe"].Get());
 
+	// 커맨드 기록을 위한 메모리를 재활용 합니다.
+	// 제출한 커맨드들이 GPU에서 모두 끝났을때 리셋할 수 있습니다.
+	ThrowIfFailed(cmdListAlloc->Reset());
+
+	// ExecuteCommandList를 통해 커맨드 큐에 제출한 다음에 커맨드 리스트를 리셋할 수 있습니다.
+	if (true)
+	{
+		ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque_wireframe"].Get()));
+	}
+	else
+	{
+		ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque"].Get()));
+	}
 
 	mCommandList->RSSetViewports(1, &mScreenViewport);
 	mCommandList->RSSetScissorRects(1, &mScissorRect);
 
-	auto transition = CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(), D3D12_RESOURCE_STATE_PRESENT,
-		D3D12_RESOURCE_STATE_RENDER_TARGET);
+	// 리소스의 상태를 렌더링을 할 수 있도록 변경합니다.
+	{
+		auto transition = CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
+			D3D12_RESOURCE_STATE_PRESENT,
+			D3D12_RESOURCE_STATE_RENDER_TARGET);
+		mCommandList->ResourceBarrier(1, &transition);
+	}
+	// 백 버퍼와 뎁스 버퍼를 클리어 합니다.
+	mCommandList->ClearRenderTargetView(GetCurrentBackBufferView(), Colors::LightSteelBlue, 0, nullptr);
+	mCommandList->ClearDepthStencilView(GetDepthStencilBufferView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
 
-	mCommandList->ResourceBarrier(1, &transition);
-
-
-	mCommandList->ClearRenderTargetView(GetCurrentBackBufferView(), DirectX::Colors::LightBlue, 0, nullptr);
-	mCommandList->ClearDepthStencilView(GetDepthStencilBufferView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL,
-	                                    1.0f, 0, 0, nullptr);
-	//where to render
-	auto currentRtv = GetCurrentBackBufferView();
-	auto currentDsv = GetDepthStencilBufferView();
-	mCommandList->OMSetRenderTargets(1, &currentRtv, true, &currentDsv);
-
+	// 어디에 렌더링을 할지 설정합니다.
+	{
+		auto backBufferView = GetCurrentBackBufferView();
+		auto depthBufferView = GetDepthStencilBufferView();
+		mCommandList->OMSetRenderTargets(1, &backBufferView, true, &depthBufferView);
+	}
 	ID3D12DescriptorHeap* descriptorHeaps[] = { mCbvHeap.Get() };
 	mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
+
 	mCommandList->SetGraphicsRootSignature(mRootSig.Get());
 
 	int passCbvIndex = mPassCbvOffset + mCurrFrameResourceIndex;
 	auto passCbvHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(mCbvHeap->GetGPUDescriptorHandleForHeapStart());
-
 	passCbvHandle.Offset(passCbvIndex, mCbvSrvUavDescSize);
 	mCommandList->SetGraphicsRootDescriptorTable(1, passCbvHandle);
 
 	DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
 
-	//rt to present
-	transition = CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(), D3D12_RESOURCE_STATE_RENDER_TARGET,
-	                                                  D3D12_RESOURCE_STATE_PRESENT);
-	mCommandList->ResourceBarrier(1, &transition);
+	// 리소스의 상태를 출력할 수 있도록 변경합니다.
+	{
+		auto transition = CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
+			D3D12_RESOURCE_STATE_RENDER_TARGET,
+			D3D12_RESOURCE_STATE_PRESENT);
+		mCommandList->ResourceBarrier(1, &transition);
+	}
+	// 커맨드 기록을 종료합니다.
+	ThrowIfFailed(mCommandList->Close());
 
-	//DrawImGui();
-
-	mCommandList->Close();
-
+	// 커맨드 리스트의 실행을 위해 큐에 제출합니다.
 	ID3D12CommandList* cmdLists[] = { mCommandList.Get() };
-	mCommandQueue->ExecuteCommandLists(_countof(cmdLists), cmdLists);
+	mCommandQueue->ExecuteCommandLists(1, cmdLists);
 
-	mSwapChain->Present(0, 0);
+	// 백 버퍼와 프론트 버퍼를 교체합니다.
+	ThrowIfFailed(mSwapChain->Present(0, 0));
 	mCurrBackBuffer = (mCurrBackBuffer + 1) % 2;
 
 	// 이 펜스 지점까지 커맨드들을 표시하기 위해 펜스 값을 증가합니다,
@@ -318,76 +338,129 @@ void DemoApp::BuildShaderAndInputLayout()
 void DemoApp::BuildShapeGeometry()
 {
 	auto box = MeshGenerator::CreateBox(1.5f, 0.5f, 1.5f, 3);
-
+	auto grid = MeshGenerator::CreateGrid(20.0f, 30.0f, 60, 40);
 	auto sphere = MeshGenerator::CreateSphere(0.5f, 20, 20);
+	auto cylinder = MeshGenerator::CreateCylinder(0.5f, 0.3f, 3.0f, 20, 20);
 
-	UINT boxVertOffset = 0;
-	UINT sphereVertOffset = (UINT)box.Vertices.size();
+	//
+	// 모든 지오메트리를 하나의 큰 버텍스/인덱스 버퍼에 연결해서 저장합니다.
+	// 그러므로 각각의 서브메쉬가 버퍼에서 차지하는 영역을 정의합니다.
+	//
 
-	UINT boxIndicesOffset = 0;
-	UINT sphereIndiciesOffset = (UINT)box.Indices32.size();
+	// 연결된 정점 버퍼에서 각 오브젝트의 버텍스 오프셋들을 캐시합니다.
+	UINT boxVertexOffset = 0;
+	UINT gridVertexOffset = (UINT)box.Vertices.size();
+	UINT sphereVertexOffset = gridVertexOffset + (UINT)grid.Vertices.size();
+	UINT cylinderVertexOffset = sphereVertexOffset + (UINT)sphere.Vertices.size();
 
+	// 연결된 인덱스 버퍼에서 각 오브젝트의 시작 인덱스를 캐시합니다.
+	UINT boxIndexOffset = 0;
+	UINT gridIndexOffset = (UINT)box.Indices32.size();
+	UINT sphereIndexOffset = gridIndexOffset + (UINT)grid.Indices32.size();
+	UINT cylinderIndexOffset = sphereIndexOffset + (UINT)sphere.Indices32.size();
+
+	// 버텍스/인덱스 버퍼에서 각 도형을 정의하는 서브메쉬 지오메트리를 정의합니다.
 
 	SubmeshGeometry boxSubmesh;
-
 	boxSubmesh.IndexCount = (UINT)box.Indices32.size();
-	boxSubmesh.BaseVertexLocation = boxVertOffset;
-	boxSubmesh.StartIndexLocation = boxIndicesOffset;
+	boxSubmesh.StartIndexLocation = boxIndexOffset;
+	boxSubmesh.BaseVertexLocation = boxVertexOffset;
+
+	SubmeshGeometry gridSubmesh;
+	gridSubmesh.IndexCount = (UINT)grid.Indices32.size();
+	gridSubmesh.StartIndexLocation = gridIndexOffset;
+	gridSubmesh.BaseVertexLocation = gridVertexOffset;
 
 	SubmeshGeometry sphereSubmesh;
 	sphereSubmesh.IndexCount = (UINT)sphere.Indices32.size();
-	sphereSubmesh.BaseVertexLocation = sphereVertOffset;
-	sphereSubmesh.StartIndexLocation = sphereIndiciesOffset;
+	sphereSubmesh.StartIndexLocation = sphereIndexOffset;
+	sphereSubmesh.BaseVertexLocation = sphereVertexOffset;
 
-	auto totalVertCount = box.Vertices.size() + sphere.Vertices.size();
+	SubmeshGeometry cylinderSubmesh;
+	cylinderSubmesh.IndexCount = (UINT)cylinder.Indices32.size();
+	cylinderSubmesh.StartIndexLocation = cylinderIndexOffset;
+	cylinderSubmesh.BaseVertexLocation = cylinderVertexOffset;
 
-	std::vector<Vertex> vertices(totalVertCount);
+	//
+	// 필요한 버텍스 엘리먼트들을 추출하고
+	// 모든 메쉬의 버텍스를 한 버텍스 버퍼에 저장합니다.
+	//
+
+	auto totalVertexCount =
+		box.Vertices.size() +
+		grid.Vertices.size() +
+		sphere.Vertices.size() +
+		cylinder.Vertices.size();
+
+	std::vector<Vertex> vertices(totalVertexCount);
 
 	UINT k = 0;
-	for(size_t i=0; i<box.Vertices.size(); ++i, ++k)
+	for (size_t i = 0; i < box.Vertices.size(); ++i, ++k)
 	{
 		vertices[k].Pos = box.Vertices[i].Position;
-		vertices[k].Color = XMFLOAT4(DirectX::Colors::Red);
+		vertices[k].Color = XMFLOAT4(DirectX::Colors::DarkGreen);
 	}
 
-	for(size_t i=0; i<sphere.Vertices.size(); ++i, ++k)
+	for (size_t i = 0; i < grid.Vertices.size(); ++i, ++k)
+	{
+		vertices[k].Pos = grid.Vertices[i].Position;
+		vertices[k].Color = XMFLOAT4(DirectX::Colors::ForestGreen);
+	}
+
+	for (size_t i = 0; i < sphere.Vertices.size(); ++i, ++k)
 	{
 		vertices[k].Pos = sphere.Vertices[i].Position;
 		vertices[k].Color = XMFLOAT4(DirectX::Colors::Crimson);
 	}
 
-	std::vector<uint16_t> indices;
+	for (size_t i = 0; i < cylinder.Vertices.size(); ++i, ++k)
+	{
+		vertices[k].Pos = cylinder.Vertices[i].Position;
+		vertices[k].Color = XMFLOAT4(DirectX::Colors::SteelBlue);
+	}
+
+	std::vector<std::uint16_t> indices;
 	indices.insert(indices.end(), std::begin(box.GetIndices16()), std::end(box.GetIndices16()));
+	indices.insert(indices.end(), std::begin(grid.GetIndices16()), std::end(grid.GetIndices16()));
 	indices.insert(indices.end(), std::begin(sphere.GetIndices16()), std::end(sphere.GetIndices16()));
+	indices.insert(indices.end(), std::begin(cylinder.GetIndices16()), std::end(cylinder.GetIndices16()));
 
 	const UINT vbByteSize = (UINT)vertices.size() * sizeof(Vertex);
-	const UINT ibByteSize = (UINT)indices.size() * sizeof(uint16_t);
+	const UINT ibByteSize = (UINT)indices.size() * sizeof(std::uint16_t);
 
 	auto geo = std::make_unique<MeshGeometry>();
 	geo->Name = "shapeGeo";
 
-	D3DCreateBlob(vbByteSize, &geo->VertexBufferCPU);
+	ThrowIfFailed(D3DCreateBlob(vbByteSize, &geo->VertexBufferCPU));
 	CopyMemory(geo->VertexBufferCPU->GetBufferPointer(), vertices.data(), vbByteSize);
 
-	D3DCreateBlob(ibByteSize, &geo->IndexBufferCPU);
+	ThrowIfFailed(D3DCreateBlob(ibByteSize, &geo->IndexBufferCPU));
 	CopyMemory(geo->IndexBufferCPU->GetBufferPointer(), indices.data(), ibByteSize);
 
-	geo->VertexBufferGPU = Buffers::CreateDefaultBuffer(md3dDevice.Get(), mCommandList.Get(), vertices.data(), vbByteSize, geo->VertexBufferUploader);
+	geo->VertexBufferGPU = Buffers::CreateDefaultBuffer(md3dDevice.Get(),
+		mCommandList.Get(),
+		vertices.data(), vbByteSize,
+		geo->VertexBufferUploader);
 
-	geo->IndexBufferGPU = Buffers::CreateDefaultBuffer(md3dDevice.Get(), mCommandList.Get(), indices.data(), ibByteSize, geo->IndexBufferUploader);
+	geo->IndexBufferGPU = Buffers::CreateDefaultBuffer(md3dDevice.Get(),
+		mCommandList.Get(),
+		indices.data(), ibByteSize,
+		geo->IndexBufferUploader);
 
 	geo->VertexByteStride = sizeof(Vertex);
 	geo->VertexBufferByteSize = vbByteSize;
-	geo->IndexFormat = DXGI_FORMAT_R16_FLOAT;
+	geo->IndexFormat = DXGI_FORMAT_R16_UINT;
 	geo->IndexBufferByteSize = ibByteSize;
 
 	geo->DrawArgs["box"] = boxSubmesh;
+	geo->DrawArgs["grid"] = gridSubmesh;
 	geo->DrawArgs["sphere"] = sphereSubmesh;
+	geo->DrawArgs["cylinder"] = cylinderSubmesh;
 
 	mGeometries[geo->Name] = std::move(geo);
 }
 
-void DemoApp::	BuildPSO()
+void DemoApp::BuildPSO()
 {
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC opaquePSODesc;
 
@@ -443,14 +516,67 @@ void DemoApp::BuildRenderItems()
 	boxRitem->BaseVertexLocation = boxRitem->Geo->DrawArgs["box"].BaseVertexLocation;
 	mAllRitems.push_back(std::move(boxRitem));
 
+
 	auto gridRitem = std::make_unique<RenderItem>();
 	gridRitem->ObjCBIndex = 1;
 	gridRitem->Geo = mGeometries["shapeGeo"].get();
 	gridRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-	gridRitem->IndexCount = gridRitem->Geo->DrawArgs["sphere"].IndexCount;
-	gridRitem->StartIndexLocation = gridRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
-	gridRitem->BaseVertexLocation = gridRitem->Geo->DrawArgs["sphere"].BaseVertexLocation;
+	gridRitem->IndexCount = gridRitem->Geo->DrawArgs["grid"].IndexCount;
+	gridRitem->StartIndexLocation = gridRitem->Geo->DrawArgs["grid"].StartIndexLocation;
+	gridRitem->BaseVertexLocation = gridRitem->Geo->DrawArgs["grid"].BaseVertexLocation;
 	mAllRitems.push_back(std::move(gridRitem));
+
+	UINT objCBIndex = 2;
+	for (int i = 0; i < 5; ++i)
+	{
+		auto leftCylRitem = std::make_unique<RenderItem>();
+		auto rightCylRitem = std::make_unique<RenderItem>();
+		auto leftSphereRitem = std::make_unique<RenderItem>();
+		auto rightSphereRitem = std::make_unique<RenderItem>();
+
+		XMMATRIX leftCylWorld = XMMatrixTranslation(-5.0f, 1.5f, -10.0f + i * 5.0f);
+		XMMATRIX rightCylWorld = XMMatrixTranslation(+5.0f, 1.5f, -10.0f + i * 5.0f);
+
+		XMMATRIX leftSphereWorld = XMMatrixTranslation(-5.0f, 3.5f, -10.0f + i * 5.0f);
+		XMMATRIX rightSphereWorld = XMMatrixTranslation(+5.0f, 3.5f, -10.0f + i * 5.0f);
+
+		XMStoreFloat4x4(&leftCylRitem->World, rightCylWorld);
+		leftCylRitem->ObjCBIndex = objCBIndex++;
+		leftCylRitem->Geo = mGeometries["shapeGeo"].get();
+		leftCylRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+		leftCylRitem->IndexCount = leftCylRitem->Geo->DrawArgs["cylinder"].IndexCount;
+		leftCylRitem->StartIndexLocation = leftCylRitem->Geo->DrawArgs["cylinder"].StartIndexLocation;
+		leftCylRitem->BaseVertexLocation = leftCylRitem->Geo->DrawArgs["cylinder"].BaseVertexLocation;
+
+		XMStoreFloat4x4(&rightCylRitem->World, leftCylWorld);
+		rightCylRitem->ObjCBIndex = objCBIndex++;
+		rightCylRitem->Geo = mGeometries["shapeGeo"].get();
+		rightCylRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+		rightCylRitem->IndexCount = rightCylRitem->Geo->DrawArgs["cylinder"].IndexCount;
+		rightCylRitem->StartIndexLocation = rightCylRitem->Geo->DrawArgs["cylinder"].StartIndexLocation;
+		rightCylRitem->BaseVertexLocation = rightCylRitem->Geo->DrawArgs["cylinder"].BaseVertexLocation;
+
+		XMStoreFloat4x4(&leftSphereRitem->World, leftSphereWorld);
+		leftSphereRitem->ObjCBIndex = objCBIndex++;
+		leftSphereRitem->Geo = mGeometries["shapeGeo"].get();
+		leftSphereRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+		leftSphereRitem->IndexCount = leftSphereRitem->Geo->DrawArgs["sphere"].IndexCount;
+		leftSphereRitem->StartIndexLocation = leftSphereRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
+		leftSphereRitem->BaseVertexLocation = leftSphereRitem->Geo->DrawArgs["sphere"].BaseVertexLocation;
+
+		XMStoreFloat4x4(&rightSphereRitem->World, rightSphereWorld);
+		rightSphereRitem->ObjCBIndex = objCBIndex++;
+		rightSphereRitem->Geo = mGeometries["shapeGeo"].get();
+		rightSphereRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+		rightSphereRitem->IndexCount = rightSphereRitem->Geo->DrawArgs["sphere"].IndexCount;
+		rightSphereRitem->StartIndexLocation = rightSphereRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
+		rightSphereRitem->BaseVertexLocation = rightSphereRitem->Geo->DrawArgs["sphere"].BaseVertexLocation;
+
+		mAllRitems.push_back(std::move(leftCylRitem));
+		mAllRitems.push_back(std::move(rightCylRitem));
+		mAllRitems.push_back(std::move(leftSphereRitem));
+		mAllRitems.push_back(std::move(rightSphereRitem));
+	}
 
 	// 모든 렌더 아이템들은 불투명합니다. 일단은..
 	for (auto& e : mAllRitems)
