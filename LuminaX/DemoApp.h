@@ -30,6 +30,7 @@ struct RenderItem
     // 렌더 아이템에 해당하는 물체 상수 버퍼의 인덱스 입니다.
     UINT ObjCBIndex = -1;
 
+	Material* Mat = nullptr;
     MeshGeometry* Geo = nullptr;
 
     // 도형 토폴로지입니다.
@@ -66,6 +67,25 @@ struct PassConstants
 	float FarZ = 0.0f;
 	float TotalTime = 0.0f;
 	float DeltaTime = 0.0f;
+
+	DirectX::XMFLOAT4 AmbientLight = { 0.0f, 0.0f, 0.0f, 1.0f };
+
+	// Indices [0, NUM_DIR_LIGHTS) are directional lights;
+	// indices [NUM_DIR_LIGHTS, NUM_DIR_LIGHTS+NUM_POINT_LIGHTS) are point lights;
+	// indices [NUM_DIR_LIGHTS+NUM_POINT_LIGHTS, NUM_DIR_LIGHTS+NUM_POINT_LIGHT+NUM_SPOT_LIGHTS)
+	// are spot lights for a maximum of MaxLights per object.
+	Light Lights[MaxLights];
+};
+
+
+struct MaterialConstants
+{
+	DirectX::XMFLOAT4 DiffuseAlbedo = { 1.0f, 1.0f, 1.0f, 1.0f };
+	DirectX::XMFLOAT3 FresnelR0 = { 0.01f, 0.01f, 0.01f };
+	float Roughness = 0.25f;
+
+	// 텍스쳐 맵핑에서 사용됩니다.
+	DirectX::XMFLOAT4X4 MatTransform = GraphicsUtil::Identity4x4();
 };
 
 
@@ -81,6 +101,7 @@ private:
 	
 	void UpdateCamera();
 	void UpdateObjectCBs();
+	void UpdateMaterialCBs();
 	void UpdateMainPassCB();
 
 
@@ -91,6 +112,7 @@ private:
     void BuildShapeGeometry();
     void BuildPSO();
 	void BuildFrameResources();
+	void BuildMaterials();
 	void BuildRenderItems();
 
 	void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems);
@@ -115,6 +137,7 @@ private:
 	std::vector<RenderItem*> mOpaqueRitems;
 
 	std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> mGeometries;
+	std::unordered_map<std::string, std::unique_ptr<Material>> mMaterials;
 	std::unordered_map<std::string, Microsoft::WRL::ComPtr<ID3D12PipelineState>> mPSOs;
 
 
@@ -125,4 +148,7 @@ private:
 	float mTheta = 1.5f * DirectX::XM_PI;
 	float mPhi = 0.2f * DirectX::XM_PI;
 	float mRadius = 15.0f;
+
+	float mSunTheta = 1.25f * DirectX::XM_PI;
+	float mSunPhi = DirectX::XM_PIDIV4;
 };

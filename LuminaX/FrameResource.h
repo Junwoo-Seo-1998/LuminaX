@@ -7,6 +7,7 @@
 
 struct PassConstants;
 struct ObjectConstants;
+struct MaterialConstants;
 
 class FrameResource
 {
@@ -18,6 +19,7 @@ public:
 
 	Microsoft::WRL::ComPtr<ID3D12CommandAllocator> CmdListAlloc;
 	std::unique_ptr<UploadBuffer<PassConstants>> PassCB = nullptr;
+	std::unique_ptr<UploadBuffer<MaterialConstants>> MaterialCB = nullptr;
 	std::unique_ptr<UploadBuffer<ObjectConstants>> ObjectCB = nullptr;
 
 	UINT64 Fence = 0;

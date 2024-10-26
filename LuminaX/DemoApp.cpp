@@ -18,7 +18,7 @@ const int GraphicsUtil::gNumFrameResources = 3;
 struct Vertex
 {
 	XMFLOAT3 Pos;
-	XMFLOAT4 Color;
+	XMFLOAT3 Normal;
 };
 
 
@@ -33,6 +33,7 @@ bool DemoApp::Init(HINSTANCE hinstance)
 	BuildRootSignature();
 	BuildShaderAndInputLayout();
 	BuildShapeGeometry();
+	BuildMaterials();
 	BuildRenderItems();
 	BuildFrameResources();
 	BuildDescHeaps();
@@ -76,6 +77,7 @@ void DemoApp::Update()
 	}
 
 	UpdateObjectCBs();
+	UpdateMaterialCBs();
 	UpdateMainPassCB();
 }
 
@@ -88,7 +90,7 @@ void DemoApp::Draw()
 	ThrowIfFailed(cmdListAlloc->Reset());
 
 	// ExecuteCommandList를 통해 커맨드 큐에 제출한 다음에 커맨드 리스트를 리셋할 수 있습니다.
-	if (true)
+	if (false)
 	{
 		ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque_wireframe"].Get()));
 	}
@@ -117,15 +119,13 @@ void DemoApp::Draw()
 		auto depthBufferView = GetDepthStencilBufferView();
 		mCommandList->OMSetRenderTargets(1, &backBufferView, true, &depthBufferView);
 	}
-	ID3D12DescriptorHeap* descriptorHeaps[] = { mCbvHeap.Get() };
-	mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
+	/*ID3D12DescriptorHeap* descriptorHeaps[] = { mCbvHeap.Get() };
+	mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);*/
 
 	mCommandList->SetGraphicsRootSignature(mRootSig.Get());
 
-	int passCbvIndex = mPassCbvOffset + mCurrFrameResourceIndex;
-	auto passCbvHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(mCbvHeap->GetGPUDescriptorHandleForHeapStart());
-	passCbvHandle.Offset(passCbvIndex, mCbvSrvUavDescSize);
-	mCommandList->SetGraphicsRootDescriptorTable(1, passCbvHandle);
+	auto passCB = mCurrFrameResource->PassCB->Resource();
+	mCommandList->SetGraphicsRootConstantBufferView(2, passCB->GetGPUVirtualAddress());
 
 	DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
 
@@ -194,6 +194,27 @@ void DemoApp::UpdateObjectCBs()
 	}
 }
 
+void DemoApp::UpdateMaterialCBs()
+{
+	auto currentMatrialCB = mCurrFrameResource->MaterialCB.get();
+	for (auto& [name, mat]:mMaterials)
+	{
+		//update only when it was updated
+		if(mat->NumFramesDirty>0)
+		{
+			MaterialConstants matConst;
+			matConst.DiffuseAlbedo = mat->DiffuseAlbedo;
+			matConst.FresnelR0 = mat->FresnelR0;
+			matConst.Roughness = mat->Roughness;
+			matConst.MatTransform = mat->MatTransform;
+
+			currentMatrialCB->CopyData(mat->MatCBIndex, matConst);
+
+			mat->NumFramesDirty--;
+		}
+	}
+}
+
 void DemoApp::UpdateMainPassCB()
 {
 	XMMATRIX view = XMLoadFloat4x4(&mView);
@@ -223,18 +244,23 @@ void DemoApp::UpdateMainPassCB()
 	mMainPassCB.TotalTime = .0f;//gt.TotalTime();
 	mMainPassCB.DeltaTime = .0f;//gt.DeltaTime();
 
+	XMVECTOR lightDir = -GraphicsUtil::SphericalToCartesian(1.0f, mSunTheta, mSunPhi);
+
+	XMStoreFloat3(&mMainPassCB.Lights[0].Direction, lightDir);
+	mMainPassCB.Lights[0].Strength = { 1.0f, 1.0f, 0.9f };
+
 	auto currPassCB = mCurrFrameResource->PassCB.get();
 	currPassCB->CopyData(0, mMainPassCB);
 }
 
 void DemoApp::BuildDescHeaps()
 {
-	UINT objCount=(UINT)mOpaqueRitems.size();
+	//UINT objCount=(UINT)mOpaqueRitems.size();
 
 	// 프레임 마다 각 오브젝트의 CBV가 필요하고
 	// 프레임 마다 한 패스의 CBV가 필요합니다.
-	UINT numDescriptors = (objCount + 1) * GraphicsUtil::gNumFrameResources;
-	mPassCbvOffset = objCount * GraphicsUtil::gNumFrameResources;
+	UINT numDescriptors = (1) * GraphicsUtil::gNumFrameResources;
+	mPassCbvOffset = 0 * GraphicsUtil::gNumFrameResources;
 
 	D3D12_DESCRIPTOR_HEAP_DESC cbvHeapDesc;
 	cbvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
@@ -247,32 +273,7 @@ void DemoApp::BuildDescHeaps()
 
 void DemoApp::BuildConstantBuffers()
 {
-	UINT objCBByteSize = (sizeof(ObjectConstants) + 255) & (~255);
-
-	UINT objCount = (UINT)mOpaqueRitems.size();
-
-	// 매 프레임마다 각 오브젝트의 CBV가 필요합니다.
-	for (int frameIndex = 0; frameIndex < GraphicsUtil::gNumFrameResources; ++frameIndex)
-	{
-		auto objectCB = mFrameResources[frameIndex]->ObjectCB->Resource();
-
-		for (UINT i = 0; i < objCount; ++i)
-		{
-			D3D12_GPU_VIRTUAL_ADDRESS cbAddress = objectCB->GetGPUVirtualAddress();
-			cbAddress += i * objCBByteSize;
-
-			int heapIndex = frameIndex * objCount + i;
-			auto handle = CD3DX12_CPU_DESCRIPTOR_HANDLE(mCbvHeap->GetCPUDescriptorHandleForHeapStart());
-			handle.Offset(heapIndex, mCbvSrvUavDescSize);
-
-			D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc;
-			cbvDesc.BufferLocation = cbAddress;
-			cbvDesc.SizeInBytes = objCBByteSize;
-			md3dDevice->CreateConstantBufferView(&cbvDesc, handle);
-		}
-	}
-	
-	UINT passCBByteSize = (sizeof(PassConstants) + 255) & (~255);
+	/*UINT passCBByteSize = (sizeof(PassConstants) + 255) & (~255);
 
 	// 마지막 세개의 디스크립터들은 매 프레임을 위한 패스 CBV입니다.
 	for (int frameIndex = 0; frameIndex < GraphicsUtil::gNumFrameResources; ++frameIndex)
@@ -290,25 +291,22 @@ void DemoApp::BuildConstantBuffers()
 		cbvDesc.BufferLocation = passCBAddr;
 		cbvDesc.SizeInBytes = passCBByteSize;
 		md3dDevice->CreateConstantBufferView(&cbvDesc, handle);
-	}
+	}*/
 }
 
 void DemoApp::BuildRootSignature()
 {
-	CD3DX12_ROOT_PARAMETER slotRootParams[2];
+	CD3DX12_ROOT_PARAMETER slotRootParams[3];
 
-	//CBV desc table
+	slotRootParams[0].InitAsConstantBufferView(0);
+	slotRootParams[1].InitAsConstantBufferView(1);
+	slotRootParams[2].InitAsConstantBufferView(2);
+	/*//CBV desc table
 	CD3DX12_DESCRIPTOR_RANGE cbvTable;
-	cbvTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0);
+	cbvTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 2);
+	slotRootParams[2].InitAsDescriptorTable(1, &cbvTable);*/
 
-	CD3DX12_DESCRIPTOR_RANGE cbvTable2;
-	cbvTable2.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 1);
-
-	slotRootParams[0].InitAsDescriptorTable(1, &cbvTable);
-	slotRootParams[1].InitAsDescriptorTable(1, &cbvTable2);
-
-
-	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(2, slotRootParams, 0, nullptr,
+	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(3, slotRootParams, 0, nullptr,
 	                                        D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
 	Microsoft::WRL::ComPtr<ID3DBlob> serializedRootSig = nullptr;
@@ -318,7 +316,8 @@ void DemoApp::BuildRootSignature()
 	HRESULT result = D3D12SerializeRootSignature(&rootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1,
 	                                             serializedRootSig.GetAddressOf(), errorBlob.GetAddressOf());
 
-	md3dDevice->CreateRootSignature(0, serializedRootSig->GetBufferPointer(), serializedRootSig->GetBufferSize(), IID_PPV_ARGS(&mRootSig));
+	auto res=md3dDevice->CreateRootSignature(0, serializedRootSig->GetBufferPointer(), serializedRootSig->GetBufferSize(), IID_PPV_ARGS(&mRootSig));
+
 }
 
 void DemoApp::BuildShaderAndInputLayout()
@@ -331,7 +330,7 @@ void DemoApp::BuildShaderAndInputLayout()
 	mInputLayout =
 	{
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0,  0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-		{ "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}
+		{ "NORMAL",    0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}
 	};
 }
 
@@ -398,25 +397,25 @@ void DemoApp::BuildShapeGeometry()
 	for (size_t i = 0; i < box.Vertices.size(); ++i, ++k)
 	{
 		vertices[k].Pos = box.Vertices[i].Position;
-		vertices[k].Color = XMFLOAT4(DirectX::Colors::DarkGreen);
+		vertices[k].Normal = box.Vertices[i].Normal;
 	}
 
 	for (size_t i = 0; i < grid.Vertices.size(); ++i, ++k)
 	{
 		vertices[k].Pos = grid.Vertices[i].Position;
-		vertices[k].Color = XMFLOAT4(DirectX::Colors::ForestGreen);
+		vertices[k].Normal = grid.Vertices[i].Normal;
 	}
 
 	for (size_t i = 0; i < sphere.Vertices.size(); ++i, ++k)
 	{
 		vertices[k].Pos = sphere.Vertices[i].Position;
-		vertices[k].Color = XMFLOAT4(DirectX::Colors::Crimson);
+		vertices[k].Normal = sphere.Vertices[i].Normal;
 	}
 
 	for (size_t i = 0; i < cylinder.Vertices.size(); ++i, ++k)
 	{
 		vertices[k].Pos = cylinder.Vertices[i].Position;
-		vertices[k].Color = XMFLOAT4(DirectX::Colors::SteelBlue);
+		vertices[k].Normal = cylinder.Vertices[i].Normal;
 	}
 
 	std::vector<std::uint16_t> indices;
@@ -488,11 +487,12 @@ void DemoApp::BuildPSO()
 	opaquePSODesc.SampleDesc.Quality = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
 	opaquePSODesc.DSVFormat = mDepthStencilFormat;
 
-	md3dDevice->CreateGraphicsPipelineState(&opaquePSODesc, IID_PPV_ARGS(&mPSOs["opaque"]));
+	//ThrowIfFailed();
+	auto reuslt = md3dDevice->CreateGraphicsPipelineState(&opaquePSODesc, IID_PPV_ARGS(&mPSOs["opaque"]));
 
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC opaqueWireframePsoDesc = opaquePSODesc;
 	opaqueWireframePsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
-	md3dDevice->CreateGraphicsPipelineState(&opaqueWireframePsoDesc, IID_PPV_ARGS(&mPSOs["opaque_wireframe"]));
+	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&opaqueWireframePsoDesc, IID_PPV_ARGS(&mPSOs["opaque_wireframe"])));
 }
 
 void DemoApp::BuildFrameResources()
@@ -504,12 +504,41 @@ void DemoApp::BuildFrameResources()
 	}
 }
 
+void DemoApp::BuildMaterials()
+{
+	int matCBIndex = 0;
+	auto box = std::make_unique<Material>();
+	box->Name = "box";
+	box->MatCBIndex = matCBIndex++;
+	box->DiffuseAlbedo = XMFLOAT4(0.2f, 0.6f, 0.2f, 1.0f);
+	box->FresnelR0 = XMFLOAT3(0.01f, 0.01f, 0.01f);
+	box->Roughness = 0.125f;
+
+	auto grass = std::make_unique<Material>();
+	grass->Name = "grass";
+	grass->MatCBIndex = matCBIndex++;
+
+	auto cylinder = std::make_unique<Material>();
+	cylinder->Name = "cylinder";
+	cylinder->MatCBIndex = matCBIndex++;
+
+	auto sphere = std::make_unique<Material>();
+	sphere->Name = "sphere";
+	sphere->MatCBIndex = matCBIndex++;
+
+	mMaterials["box"] = std::move(box);
+	mMaterials["grass"] = std::move(grass);
+	mMaterials["cylinder"] = std::move(cylinder);
+	mMaterials["sphere"] = std::move(sphere);
+}
+
 void DemoApp::BuildRenderItems()
 {
 	auto boxRitem = std::make_unique<RenderItem>();
 	XMStoreFloat4x4(&boxRitem->World, XMMatrixScaling(2.0f, 2.0f, 2.0f) * XMMatrixTranslation(0.0f, 0.5f, -3.0f));
 	boxRitem->ObjCBIndex = 0;
 	boxRitem->Geo = mGeometries["shapeGeo"].get();
+	boxRitem->Mat = mMaterials["box"].get();
 	boxRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 	boxRitem->IndexCount = (UINT)boxRitem->Geo->DrawArgs["box"].IndexCount;
 	boxRitem->StartIndexLocation = boxRitem->Geo->DrawArgs["box"].StartIndexLocation;
@@ -520,6 +549,7 @@ void DemoApp::BuildRenderItems()
 	auto gridRitem = std::make_unique<RenderItem>();
 	gridRitem->ObjCBIndex = 1;
 	gridRitem->Geo = mGeometries["shapeGeo"].get();
+	gridRitem->Mat = mMaterials["box"].get();
 	gridRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 	gridRitem->IndexCount = gridRitem->Geo->DrawArgs["grid"].IndexCount;
 	gridRitem->StartIndexLocation = gridRitem->Geo->DrawArgs["grid"].StartIndexLocation;
@@ -543,6 +573,7 @@ void DemoApp::BuildRenderItems()
 		XMStoreFloat4x4(&leftCylRitem->World, rightCylWorld);
 		leftCylRitem->ObjCBIndex = objCBIndex++;
 		leftCylRitem->Geo = mGeometries["shapeGeo"].get();
+		leftCylRitem->Mat = mMaterials["box"].get();
 		leftCylRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		leftCylRitem->IndexCount = leftCylRitem->Geo->DrawArgs["cylinder"].IndexCount;
 		leftCylRitem->StartIndexLocation = leftCylRitem->Geo->DrawArgs["cylinder"].StartIndexLocation;
@@ -551,6 +582,7 @@ void DemoApp::BuildRenderItems()
 		XMStoreFloat4x4(&rightCylRitem->World, leftCylWorld);
 		rightCylRitem->ObjCBIndex = objCBIndex++;
 		rightCylRitem->Geo = mGeometries["shapeGeo"].get();
+		rightCylRitem->Mat = mMaterials["box"].get();
 		rightCylRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		rightCylRitem->IndexCount = rightCylRitem->Geo->DrawArgs["cylinder"].IndexCount;
 		rightCylRitem->StartIndexLocation = rightCylRitem->Geo->DrawArgs["cylinder"].StartIndexLocation;
@@ -559,6 +591,7 @@ void DemoApp::BuildRenderItems()
 		XMStoreFloat4x4(&leftSphereRitem->World, leftSphereWorld);
 		leftSphereRitem->ObjCBIndex = objCBIndex++;
 		leftSphereRitem->Geo = mGeometries["shapeGeo"].get();
+		leftSphereRitem->Mat = mMaterials["box"].get();
 		leftSphereRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		leftSphereRitem->IndexCount = leftSphereRitem->Geo->DrawArgs["sphere"].IndexCount;
 		leftSphereRitem->StartIndexLocation = leftSphereRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
@@ -567,6 +600,7 @@ void DemoApp::BuildRenderItems()
 		XMStoreFloat4x4(&rightSphereRitem->World, rightSphereWorld);
 		rightSphereRitem->ObjCBIndex = objCBIndex++;
 		rightSphereRitem->Geo = mGeometries["shapeGeo"].get();
+		rightSphereRitem->Mat = mMaterials["box"].get();
 		rightSphereRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		rightSphereRitem->IndexCount = rightSphereRitem->Geo->DrawArgs["sphere"].IndexCount;
 		rightSphereRitem->StartIndexLocation = rightSphereRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
@@ -575,7 +609,7 @@ void DemoApp::BuildRenderItems()
 		mAllRitems.push_back(std::move(leftCylRitem));
 		mAllRitems.push_back(std::move(rightCylRitem));
 		mAllRitems.push_back(std::move(leftSphereRitem));
-		mAllRitems.push_back(std::move(rightSphereRitem));
+		mAllRitems.push_back(std::move(rightSphereRitem)); 
 	}
 
 	// 모든 렌더 아이템들은 불투명합니다. 일단은..
@@ -585,6 +619,11 @@ void DemoApp::BuildRenderItems()
 
 void DemoApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems)
 {
+	UINT objCBByteSize = GraphicsUtil::CalcConstantBufferByteSize(sizeof(ObjectConstants));
+	UINT matCBByteSize = GraphicsUtil::CalcConstantBufferByteSize(sizeof(MaterialConstants));
+
+	auto objCB = mCurrFrameResource->ObjectCB->Resource();
+	auto matCB = mCurrFrameResource->MaterialCB->Resource();
 	// 각 렌더 항목에 대해서...
 	for (size_t i = 0; i < ritems.size(); ++i)
 	{
@@ -596,12 +635,11 @@ void DemoApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vec
 		cmdList->IASetIndexBuffer(&indexView);
 		cmdList->IASetPrimitiveTopology(ri->PrimitiveType);
 
-		// 현 프레임 리소스에 해당하는 오브젝트의 CBV의 오프셋을 계산합니다.
-		UINT cbvIndex = mCurrFrameResourceIndex * (UINT)mOpaqueRitems.size() + ri->ObjCBIndex;
-		auto cbvHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(mCbvHeap->GetGPUDescriptorHandleForHeapStart());
-		cbvHandle.Offset(cbvIndex, mCbvSrvUavDescSize);
+		D3D12_GPU_VIRTUAL_ADDRESS objCBAddress = objCB->GetGPUVirtualAddress() + ri->ObjCBIndex * objCBByteSize;
+		cmdList->SetGraphicsRootConstantBufferView(0, objCBAddress);
 
-		cmdList->SetGraphicsRootDescriptorTable(0, cbvHandle);
+		D3D12_GPU_VIRTUAL_ADDRESS matCBAddress = matCB->GetGPUVirtualAddress() + ri->Mat->MatCBIndex * matCBByteSize;
+		cmdList->SetGraphicsRootConstantBufferView(1, matCBAddress);
 
 		cmdList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
 	}
