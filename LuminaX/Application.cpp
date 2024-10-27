@@ -106,6 +106,32 @@ LRESULT Application::MsgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	case WM_DESTROY:
 		PostQuitMessage(0);
 		return 0;
+
+	case WM_SIZE:
+		mWidth = LOWORD(lParam);
+		mHeight = HIWORD(lParam);
+
+		if (md3dDevice)
+		{
+			if (wParam == SIZE_MINIMIZED)
+			{
+			}
+			else if (wParam == SIZE_MAXIMIZED)
+			{
+				OnResize();
+			}
+			else if (wParam == SIZE_RESTORED)
+			{
+				OnResize();
+			}
+		}
+		return 0;
+
+		// 윈도우가 너무 작아지는것을 방지합니다.
+	case WM_GETMINMAXINFO:
+		((MINMAXINFO*)lParam)->ptMinTrackSize.x = 200;
+		((MINMAXINFO*)lParam)->ptMinTrackSize.y = 200;
+		return 0;
 	}
 	return DefWindowProc(hwnd, msg, wParam, lParam);
 }

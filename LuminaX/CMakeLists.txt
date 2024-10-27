@@ -52,7 +52,7 @@ set_target_properties(LuminaX PROPERTIES WIN32_EXECUTABLE TRUE)
 target_link_libraries(LuminaX PRIVATE Microsoft::DirectX-Headers assimp dxguid.lib d3d12.lib d3dcompiler.lib dxgi.lib imgui)
 target_compile_definitions(LuminaX PUBLIC _UNICODE UNICODE _WIN32_WINNT=0x0A00)
 
-file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/Shaders DESTINATION ${CMAKE_BINARY_DIR})
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/Shaders DESTINATION ${CMAKE_BINARY_DIR}/LuminaX)
 
 if (CMAKE_VERSION VERSION_GREATER 3.12)
   set_property(TARGET LuminaX PROPERTY CXX_STANDARD 20)
