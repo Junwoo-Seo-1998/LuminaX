@@ -43,7 +43,7 @@ Microsoft::WRL::ComPtr<ID3DBlob> GraphicsUtil::CompileShader(const std::wstring&
 
 	if (errorCode != nullptr)
 	{
-		MessageBoxA(NULL, (char*)errorCode->GetBufferPointer(), "Error", MB_OK);
+		//MessageBoxA(NULL, (char*)errorCode->GetBufferPointer(), "Error", MB_OK);
 		OutputDebugStringA((char*)errorCode->GetBufferPointer());
 	}
 	return byteCode;

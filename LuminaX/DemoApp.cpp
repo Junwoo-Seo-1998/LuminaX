@@ -163,13 +163,8 @@ void DemoApp::LoadTextures()
 {
 	auto grassTex = std::make_unique<Texture>();
 	grassTex->Name = "grassTex";
-	grassTex->Filename = L".\\Textures\\grass.png";
+	grassTex->Filename = L"./Assets/Textures/grass.png";
 	GraphicsUtil::LoadTextureFromFile(grassTex->Filename, md3dDevice.Get(), mCommandList.Get(), grassTex->Resource, grassTex->UploadHeap);
-	/*grassTex->Name = "grassTex";
-	grassTex->Filename = L"..\\Textures\\grass.dds";
-	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
-		mCommandList.Get(), grassTex->Filename.c_str(),
-		grassTex->Resource, grassTex->UploadHeap));*/
 
 	mTextures[grassTex->Name] = std::move(grassTex);
 }
@@ -340,7 +335,7 @@ void DemoApp::BuildDescHeaps()
 	UINT numDescriptors = (UINT)mTextures.size();
 
 	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
-	srvHeapDesc.NumDescriptors = 1;
+	srvHeapDesc.NumDescriptors = numDescriptors;
 	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&mGeneralDescHeap)));
@@ -372,34 +367,21 @@ void DemoApp::BuildConstantBuffers()
 void DemoApp::BuildShaderResourceView()
 {
 	CD3DX12_CPU_DESCRIPTOR_HANDLE handle(mGeneralDescHeap->GetCPUDescriptorHandleForHeapStart());
-	//D3D12_SHADER_RESOURCE_VIEW_DESC desc;
-	/*ZeroMemory(&desc, sizeof(desc));
-	desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-	desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-	desc.Texture2D.MostDetailedMip = 0;
-	desc.Texture2D.MipLevels = -1;
-	for (auto& m: mTextures)
-	{
-		desc.Format = m.second->Resource->GetDesc().Format;
-		md3dDevice->CreateShaderResourceView(m.second->Resource.Get(), &desc, handle);
-		handle.Offset(1, mCbvSrvUavDescSize);
-	}*/
-
-	auto grassTex = mTextures["grassTex"]->Resource;
-	/*auto waterTex = mTextures["waterTex"]->Resource;
-	auto fenceTex = mTextures["fenceTex"]->Resource;*/
-
-	CD3DX12_CPU_DESCRIPTOR_HANDLE hDescriptor(mGeneralDescHeap->GetCPUDescriptorHandleForHeapStart());
-
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-	srvDesc.Format = grassTex->GetDesc().Format;
 	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 	srvDesc.Texture2D.MostDetailedMip = 0;
-	srvDesc.Texture2D.MipLevels = grassTex->GetDesc().MipLevels;
+	srvDesc.Texture2D.MipLevels = -1;
 	srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
 
-	md3dDevice->CreateShaderResourceView(grassTex.Get(), &srvDesc, hDescriptor);
+	int index = 0;
+	for (auto& m : mTextures)
+	{
+		srvDesc.Format = m.second->Resource->GetDesc().Format;
+		md3dDevice->CreateShaderResourceView(m.second->Resource.Get(), &srvDesc, handle);
+		handle.Offset(1, mCbvSrvUavDescSize);
+		m.second->heapIndex = index++;
+	}
 }
 
 void DemoApp::BuildRootSignature()
@@ -416,11 +398,6 @@ void DemoApp::BuildRootSignature()
 	slotRootParams[3].InitAsConstantBufferView(2);
 
 	auto staticSamplers = GetStaticSamplers();
-
-	/*//CBV desc table
-	CD3DX12_DESCRIPTOR_RANGE cbvTable;
-	cbvTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 2);
-	slotRootParams[2].InitAsDescriptorTable(1, &cbvTable);*/
 
 	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(_countof(slotRootParams), slotRootParams, (UINT)staticSamplers.size(), staticSamplers.data(),
 		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
@@ -440,8 +417,8 @@ void DemoApp::BuildShaderAndInputLayout()
 {
 	HRESULT result = S_OK;
 
-	mVSByteCode = GraphicsUtil::CompileShader(L"Shaders/color.hlsl", nullptr, "VS", "vs_5_0");
-	mPSByteCode = GraphicsUtil::CompileShader(L"Shaders/color.hlsl", nullptr, "PS", "ps_5_0");
+	mVSByteCode = GraphicsUtil::CompileShader(L"./Assets/Shaders/color.hlsl", nullptr, "VS", "vs_5_0");
+	mPSByteCode = GraphicsUtil::CompileShader(L"./Assets/Shaders/color.hlsl", nullptr, "PS", "ps_5_0");
 
 	mInputLayout =
 	{
