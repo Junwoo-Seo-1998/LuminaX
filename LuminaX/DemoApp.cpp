@@ -19,6 +19,7 @@ struct Vertex
 {
 	XMFLOAT3 Pos;
 	XMFLOAT3 Normal;
+	XMFLOAT2 TexC;
 };
 
 
@@ -30,13 +31,15 @@ bool DemoApp::Init(HINSTANCE hinstance)
 	// 초기화 명령들을 기록하기 위해 커맨드 리스트를 리셋합니다.
 	ThrowIfFailed(mCommandList->Reset(mCommandListAlloc.Get(), nullptr));
 
+	LoadTextures();
+	BuildDescHeaps();
+	BuildShaderResourceView();
 	BuildRootSignature();
 	BuildShaderAndInputLayout();
 	BuildShapeGeometry();
 	BuildMaterials();
 	BuildRenderItems();
 	BuildFrameResources();
-	BuildDescHeaps();
 	BuildConstantBuffers();
 	BuildPSO();
 
@@ -119,13 +122,13 @@ void DemoApp::Draw()
 		auto depthBufferView = GetDepthStencilBufferView();
 		mCommandList->OMSetRenderTargets(1, &backBufferView, true, &depthBufferView);
 	}
-	/*ID3D12DescriptorHeap* descriptorHeaps[] = { mCbvHeap.Get() };
-	mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);*/
+	ID3D12DescriptorHeap* descriptorHeaps[] = { mGeneralDescHeap.Get() };
+	mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
 
 	mCommandList->SetGraphicsRootSignature(mRootSig.Get());
 
 	auto passCB = mCurrFrameResource->PassCB->Resource();
-	mCommandList->SetGraphicsRootConstantBufferView(2, passCB->GetGPUVirtualAddress());
+	mCommandList->SetGraphicsRootConstantBufferView(3, passCB->GetGPUVirtualAddress());
 
 	DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
 
@@ -154,6 +157,21 @@ void DemoApp::Draw()
 	// 어플리케이션은 GPU 시간축에 있지 않기 때문에,
 	// GPU가 모든 커맨드들의 처리가 완료되기 전까지 Signal()을 처리하지 않습니다.
 	mCommandQueue->Signal(mFence.Get(), mCurrentFence);
+}
+
+void DemoApp::LoadTextures()
+{
+	auto grassTex = std::make_unique<Texture>();
+	grassTex->Name = "grassTex";
+	grassTex->Filename = L".\\Textures\\grass.png";
+	GraphicsUtil::LoadTextureFromFile(grassTex->Filename, md3dDevice.Get(), mCommandList.Get(), grassTex->Resource, grassTex->UploadHeap);
+	/*grassTex->Name = "grassTex";
+	grassTex->Filename = L"..\\Textures\\grass.dds";
+	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
+		mCommandList.Get(), grassTex->Filename.c_str(),
+		grassTex->Resource, grassTex->UploadHeap));*/
+
+	mTextures[grassTex->Name] = std::move(grassTex);
 }
 
 void DemoApp::UpdateCamera()
@@ -253,22 +271,79 @@ void DemoApp::UpdateMainPassCB()
 	currPassCB->CopyData(0, mMainPassCB);
 }
 
+std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> DemoApp::GetStaticSamplers()
+{
+	// 어플리케이션은 보통 몇개의 샘플러만 필요합니다. 그래서 자주 사용되는 샘플러 몇개를 정의하고
+	// 루트 시그네쳐의 일부분으로 유지합니다.
+
+	const CD3DX12_STATIC_SAMPLER_DESC pointWrap(
+		0, // shaderRegister
+		D3D12_FILTER_MIN_MAG_MIP_POINT, // filter
+		D3D12_TEXTURE_ADDRESS_MODE_WRAP,  // addressU
+		D3D12_TEXTURE_ADDRESS_MODE_WRAP,  // addressV
+		D3D12_TEXTURE_ADDRESS_MODE_WRAP); // addressW
+
+	const CD3DX12_STATIC_SAMPLER_DESC pointClamp(
+		1, // shaderRegister
+		D3D12_FILTER_MIN_MAG_MIP_POINT, // filter
+		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,  // addressU
+		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,  // addressV
+		D3D12_TEXTURE_ADDRESS_MODE_CLAMP); // addressW
+
+	const CD3DX12_STATIC_SAMPLER_DESC linearWrap(
+		2, // shaderRegister
+		D3D12_FILTER_MIN_MAG_MIP_LINEAR, // filter
+		D3D12_TEXTURE_ADDRESS_MODE_WRAP,  // addressU
+		D3D12_TEXTURE_ADDRESS_MODE_WRAP,  // addressV
+		D3D12_TEXTURE_ADDRESS_MODE_WRAP); // addressW
+
+	const CD3DX12_STATIC_SAMPLER_DESC linearClamp(
+		3, // shaderRegister
+		D3D12_FILTER_MIN_MAG_MIP_LINEAR, // filter
+		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,  // addressU
+		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,  // addressV
+		D3D12_TEXTURE_ADDRESS_MODE_CLAMP); // addressW
+
+	const CD3DX12_STATIC_SAMPLER_DESC anisotropicWrap(
+		4, // shaderRegister
+		D3D12_FILTER_ANISOTROPIC, // filter
+		D3D12_TEXTURE_ADDRESS_MODE_WRAP,  // addressU
+		D3D12_TEXTURE_ADDRESS_MODE_WRAP,  // addressV
+		D3D12_TEXTURE_ADDRESS_MODE_WRAP,  // addressW
+		0.0f,                             // mipLODBias
+		8);                               // maxAnisotropy
+
+	const CD3DX12_STATIC_SAMPLER_DESC anisotropicClamp(
+		5, // shaderRegister
+		D3D12_FILTER_ANISOTROPIC, // filter
+		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,  // addressU
+		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,  // addressV
+		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,  // addressW
+		0.0f,                              // mipLODBias
+		8);                                // maxAnisotropy
+
+	return {
+		pointWrap, pointClamp,
+		linearWrap, linearClamp,
+		anisotropicWrap, anisotropicClamp };
+}
+
 void DemoApp::BuildDescHeaps()
 {
 	//UINT objCount=(UINT)mOpaqueRitems.size();
 
 	// 프레임 마다 각 오브젝트의 CBV가 필요하고
 	// 프레임 마다 한 패스의 CBV가 필요합니다.
-	UINT numDescriptors = (1) * GraphicsUtil::gNumFrameResources;
-	mPassCbvOffset = 0 * GraphicsUtil::gNumFrameResources;
+	//no need for now
+	//UINT numDescriptors = (1) * GraphicsUtil::gNumFrameResources;
+	//mPassCbvOffset = 0 * GraphicsUtil::gNumFrameResources;
+	UINT numDescriptors = (UINT)mTextures.size();
 
-	D3D12_DESCRIPTOR_HEAP_DESC cbvHeapDesc;
-	cbvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-	cbvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-	cbvHeapDesc.NodeMask = 0;
-	cbvHeapDesc.NumDescriptors = numDescriptors;
-
-	md3dDevice->CreateDescriptorHeap(&cbvHeapDesc, IID_PPV_ARGS(&mCbvHeap));
+	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
+	srvHeapDesc.NumDescriptors = 1;
+	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&mGeneralDescHeap)));
 }
 
 void DemoApp::BuildConstantBuffers()
@@ -294,20 +369,61 @@ void DemoApp::BuildConstantBuffers()
 	}*/
 }
 
+void DemoApp::BuildShaderResourceView()
+{
+	CD3DX12_CPU_DESCRIPTOR_HANDLE handle(mGeneralDescHeap->GetCPUDescriptorHandleForHeapStart());
+	//D3D12_SHADER_RESOURCE_VIEW_DESC desc;
+	/*ZeroMemory(&desc, sizeof(desc));
+	desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+	desc.Texture2D.MostDetailedMip = 0;
+	desc.Texture2D.MipLevels = -1;
+	for (auto& m: mTextures)
+	{
+		desc.Format = m.second->Resource->GetDesc().Format;
+		md3dDevice->CreateShaderResourceView(m.second->Resource.Get(), &desc, handle);
+		handle.Offset(1, mCbvSrvUavDescSize);
+	}*/
+
+	auto grassTex = mTextures["grassTex"]->Resource;
+	/*auto waterTex = mTextures["waterTex"]->Resource;
+	auto fenceTex = mTextures["fenceTex"]->Resource;*/
+
+	CD3DX12_CPU_DESCRIPTOR_HANDLE hDescriptor(mGeneralDescHeap->GetCPUDescriptorHandleForHeapStart());
+
+	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	srvDesc.Format = grassTex->GetDesc().Format;
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+	srvDesc.Texture2D.MostDetailedMip = 0;
+	srvDesc.Texture2D.MipLevels = grassTex->GetDesc().MipLevels;
+	srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
+
+	md3dDevice->CreateShaderResourceView(grassTex.Get(), &srvDesc, hDescriptor);
+}
+
 void DemoApp::BuildRootSignature()
 {
-	CD3DX12_ROOT_PARAMETER slotRootParams[3];
+	CD3DX12_ROOT_PARAMETER slotRootParams[4];
 
-	slotRootParams[0].InitAsConstantBufferView(0);
-	slotRootParams[1].InitAsConstantBufferView(1);
-	slotRootParams[2].InitAsConstantBufferView(2);
+	//texture
+	CD3DX12_DESCRIPTOR_RANGE tex;
+	tex.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
+
+	slotRootParams[0].InitAsDescriptorTable(1, &tex, D3D12_SHADER_VISIBILITY_PIXEL);
+	slotRootParams[1].InitAsConstantBufferView(0);
+	slotRootParams[2].InitAsConstantBufferView(1);
+	slotRootParams[3].InitAsConstantBufferView(2);
+
+	auto staticSamplers = GetStaticSamplers();
+
 	/*//CBV desc table
 	CD3DX12_DESCRIPTOR_RANGE cbvTable;
 	cbvTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 2);
 	slotRootParams[2].InitAsDescriptorTable(1, &cbvTable);*/
 
-	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(3, slotRootParams, 0, nullptr,
-	                                        D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(_countof(slotRootParams), slotRootParams, (UINT)staticSamplers.size(), staticSamplers.data(),
+		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
 	Microsoft::WRL::ComPtr<ID3DBlob> serializedRootSig = nullptr;
 	Microsoft::WRL::ComPtr<ID3DBlob> errorBlob = nullptr;
@@ -330,7 +446,8 @@ void DemoApp::BuildShaderAndInputLayout()
 	mInputLayout =
 	{
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0,  0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-		{ "NORMAL",    0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}
+		{ "NORMAL",    0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
 	};
 }
 
@@ -398,24 +515,28 @@ void DemoApp::BuildShapeGeometry()
 	{
 		vertices[k].Pos = box.Vertices[i].Position;
 		vertices[k].Normal = box.Vertices[i].Normal;
+		vertices[k].TexC = box.Vertices[i].TexC;
 	}
 
 	for (size_t i = 0; i < grid.Vertices.size(); ++i, ++k)
 	{
 		vertices[k].Pos = grid.Vertices[i].Position;
 		vertices[k].Normal = grid.Vertices[i].Normal;
+		vertices[k].TexC = grid.Vertices[i].TexC;
 	}
 
 	for (size_t i = 0; i < sphere.Vertices.size(); ++i, ++k)
 	{
 		vertices[k].Pos = sphere.Vertices[i].Position;
 		vertices[k].Normal = sphere.Vertices[i].Normal;
+		vertices[k].TexC = sphere.Vertices[i].TexC;
 	}
 
 	for (size_t i = 0; i < cylinder.Vertices.size(); ++i, ++k)
 	{
 		vertices[k].Pos = cylinder.Vertices[i].Position;
 		vertices[k].Normal = cylinder.Vertices[i].Normal;
+		vertices[k].TexC = cylinder.Vertices[i].TexC;
 	}
 
 	std::vector<std::uint16_t> indices;
@@ -513,23 +634,27 @@ void DemoApp::BuildMaterials()
 	box->DiffuseAlbedo = XMFLOAT4(0.2f, 0.6f, 0.2f, 1.0f);
 	box->FresnelR0 = XMFLOAT3(0.01f, 0.01f, 0.01f);
 	box->Roughness = 0.125f;
+	box->DiffuseSrvHeapIndex = 0;
 
 	auto grass = std::make_unique<Material>();
 	grass->Name = "grass";
 	grass->MatCBIndex = matCBIndex++;
+	grass->DiffuseSrvHeapIndex = 0;
 
 	auto cylinder = std::make_unique<Material>();
 	cylinder->Name = "cylinder";
 	cylinder->MatCBIndex = matCBIndex++;
+	cylinder->DiffuseSrvHeapIndex = 0;
 
 	auto sphere = std::make_unique<Material>();
 	sphere->Name = "sphere";
 	sphere->MatCBIndex = matCBIndex++;
+	sphere->DiffuseSrvHeapIndex = 0;
 
 	mMaterials["box"] = std::move(box);
-	mMaterials["grass"] = std::move(grass);
+	/*mMaterials["grass"] = std::move(grass);
 	mMaterials["cylinder"] = std::move(cylinder);
-	mMaterials["sphere"] = std::move(sphere);
+	mMaterials["sphere"] = std::move(sphere);*/
 }
 
 void DemoApp::BuildRenderItems()
@@ -635,11 +760,15 @@ void DemoApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vec
 		cmdList->IASetIndexBuffer(&indexView);
 		cmdList->IASetPrimitiveTopology(ri->PrimitiveType);
 
+		/*CD3DX12_GPU_DESCRIPTOR_HANDLE tex(mGeneralDescHeap->GetGPUDescriptorHandleForHeapStart());
+		tex.Offset(ri->Mat->DiffuseSrvHeapIndex, mCbvSrvUavDescSize);*/
+		cmdList->SetGraphicsRootDescriptorTable(0, mGeneralDescHeap->GetGPUDescriptorHandleForHeapStart());
+
 		D3D12_GPU_VIRTUAL_ADDRESS objCBAddress = objCB->GetGPUVirtualAddress() + ri->ObjCBIndex * objCBByteSize;
-		cmdList->SetGraphicsRootConstantBufferView(0, objCBAddress);
+		cmdList->SetGraphicsRootConstantBufferView(1, objCBAddress);
 
 		D3D12_GPU_VIRTUAL_ADDRESS matCBAddress = matCB->GetGPUVirtualAddress() + ri->Mat->MatCBIndex * matCBByteSize;
-		cmdList->SetGraphicsRootConstantBufferView(1, matCBAddress);
+		cmdList->SetGraphicsRootConstantBufferView(2, matCBAddress);
 
 		cmdList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
 	}

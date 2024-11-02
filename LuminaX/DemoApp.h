@@ -3,6 +3,7 @@
 
 #include "Application.h"
 #include <memory>
+#include <array>
 #include "Buffers.h"
 #include "FrameResource.h"
 #include "GraphicsUtil.h"
@@ -49,6 +50,8 @@ struct ObjectConstants
 		0.0f, 1.0f, 0.0f, 0.0f,
 		0.0f, 0.0f, 1.0f, 0.0f,
 		0.0f, 0.0f, 0.0f, 1.0f);
+
+	DirectX::XMFLOAT4X4 TexTransform = GraphicsUtil::Identity4x4();
 };
 
 struct PassConstants
@@ -98,15 +101,18 @@ private:
 	virtual void OnResize() override;
 	virtual void Update() override;
 	virtual void Draw() override;
-	
+
+	void LoadTextures();
 	void UpdateCamera();
 	void UpdateObjectCBs();
 	void UpdateMaterialCBs();
 	void UpdateMainPassCB();
 
+	std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> GetStaticSamplers();
 
 	void BuildDescHeaps();
 	void BuildConstantBuffers();
+	void BuildShaderResourceView();
 	void BuildRootSignature();
 	void BuildShaderAndInputLayout();
     void BuildShapeGeometry();
@@ -125,7 +131,7 @@ private:
 
 	PassConstants mMainPassCB;
 	UINT mPassCbvOffset = 0;
-	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> mCbvHeap;
+	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> mGeneralDescHeap;
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> mRootSig;
 
 	Microsoft::WRL::ComPtr<ID3DBlob> mVSByteCode;
@@ -138,6 +144,7 @@ private:
 
 	std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> mGeometries;
 	std::unordered_map<std::string, std::unique_ptr<Material>> mMaterials;
+	std::unordered_map<std::string, std::unique_ptr<Texture>> mTextures;
 	std::unordered_map<std::string, Microsoft::WRL::ComPtr<ID3D12PipelineState>> mPSOs;
 
 

@@ -16,6 +16,12 @@ public:
     static DirectX::XMFLOAT4X4 Identity4x4();
     static DirectX::XMVECTOR SphericalToCartesian(float radius, float theta, float phi);
     static const int gNumFrameResources;
+
+
+    static bool LoadTextureFromFile(const std::wstring& fileName,
+        ID3D12Device* device,
+        ID3D12GraphicsCommandList* cmdList,
+        Microsoft::WRL::ComPtr<ID3D12Resource>& texture, Microsoft::WRL::ComPtr<ID3D12Resource>& textureUploadHeap);
 };
 
 // Defines a subrange of geometry in a MeshGeometry.  This is for when multiple
@@ -126,6 +132,17 @@ struct Material
     DirectX::XMFLOAT3 FresnelR0 = { 0.01f, 0.01f, 0.01f };
     float Roughness = 0.25f;
     DirectX::XMFLOAT4X4 MatTransform = GraphicsUtil::Identity4x4();
+};
+
+struct Texture
+{
+    // 검색을 위한 고유한 메터리얼 이름입니다.
+    std::string Name;
+
+    std::wstring Filename;
+
+    Microsoft::WRL::ComPtr<ID3D12Resource> Resource = nullptr;
+    Microsoft::WRL::ComPtr<ID3D12Resource> UploadHeap = nullptr;
 };
 
 inline std::wstring AnsiToWString(const std::string& str)
