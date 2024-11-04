@@ -417,8 +417,8 @@ void DemoApp::BuildShaderAndInputLayout()
 {
 	HRESULT result = S_OK;
 
-	mVSByteCode = GraphicsUtil::CompileShader(L"./Assets/Shaders/color.hlsl", nullptr, "VS", "vs_5_0");
-	mPSByteCode = GraphicsUtil::CompileShader(L"./Assets/Shaders/color.hlsl", nullptr, "PS", "ps_5_0");
+	mVSByteCode = GraphicsUtil::CompileShader(L"./Assets/Shaders/brdf.hlsl", nullptr, "VS", "vs_5_0");
+	mPSByteCode = GraphicsUtil::CompileShader(L"./Assets/Shaders/brdf.hlsl", nullptr, "PS", "ps_5_0");
 
 	mInputLayout =
 	{
