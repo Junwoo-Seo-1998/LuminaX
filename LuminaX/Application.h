@@ -20,6 +20,10 @@ protected:
 	virtual void Update() = 0;
 	virtual void Draw() = 0;
 
+	virtual void OnMouseDown(WPARAM btnState, int x, int y) { }
+	virtual void OnMouseUp(WPARAM btnState, int x, int y) { }
+	virtual void OnMouseMove(WPARAM btnState, int x, int y) { }
+
 	void DrawImGui();
 
 	bool CreateMainWindow();

@@ -9,6 +9,10 @@
 #include "MeshGenerator.h"
 #include "Buffers.h"
 
+#include <algorithm>
+#include <numbers>
+
+
 using Microsoft::WRL::ComPtr;
 using namespace DirectX;
 //using namespace DirectX::PackedVector;
@@ -31,10 +35,16 @@ bool DemoApp::Init(HINSTANCE hinstance)
 	// 초기화 명령들을 기록하기 위해 커맨드 리스트를 리셋합니다.
 	ThrowIfFailed(mCommandList->Reset(mCommandListAlloc.Get(), nullptr));
 
+	mBlurFilter = std::make_unique<BlurFilter>(md3dDevice.Get(),
+		mWidth,
+		mHeight,
+		DXGI_FORMAT_R8G8B8A8_UNORM);
+
 	LoadTextures();
 	BuildDescHeaps();
-	BuildShaderResourceView();
+	BuildDescViews();
 	BuildRootSignature();
+	BuildPostProcessRootSignature();
 	BuildShaderAndInputLayout();
 	BuildShapeGeometry();
 	BuildMaterials();
@@ -59,6 +69,11 @@ void DemoApp::OnResize()
 	Application::OnResize();
 	XMMATRIX P = XMMatrixPerspectiveFovLH(0.25f * DirectX::XM_PI, (float)mWidth/mHeight , 1.0f, 1000.0f);
 	XMStoreFloat4x4(&mProj, P);
+
+	if (mBlurFilter != nullptr)
+	{
+		mBlurFilter->OnResize(mWidth, mHeight);
+	}
 }
 
 void DemoApp::Update()
@@ -132,6 +147,23 @@ void DemoApp::Draw()
 
 	DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
 
+	//blur
+	if(true)
+	{
+		mBlurFilter->Execute(mCommandList.Get(), mPostProcessRootSignature.Get(),
+			mPSOs["blurH"].Get(), mPSOs["blurV"].Get(), CurrentBackBuffer(), 4);
+
+		auto toDest = CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
+			D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+		mCommandList->ResourceBarrier(1, &toDest);
+
+		mCommandList->CopyResource(CurrentBackBuffer(), mBlurFilter->Output());
+
+		auto toPresent = CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
+			D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT);
+		mCommandList->ResourceBarrier(1, &toPresent);
+	}
+
 	// 리소스의 상태를 출력할 수 있도록 변경합니다.
 	{
 		auto transition = CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
@@ -157,6 +189,51 @@ void DemoApp::Draw()
 	// 어플리케이션은 GPU 시간축에 있지 않기 때문에,
 	// GPU가 모든 커맨드들의 처리가 완료되기 전까지 Signal()을 처리하지 않습니다.
 	mCommandQueue->Signal(mFence.Get(), mCurrentFence);
+}
+
+void DemoApp::OnMouseDown(WPARAM btnState, int x, int y)
+{
+	mLastMousePos.x = x;
+	mLastMousePos.y = y;
+
+	SetCapture(mhMainWindow);
+}
+
+void DemoApp::OnMouseUp(WPARAM btnState, int x, int y)
+{
+	ReleaseCapture();
+}
+
+void DemoApp::OnMouseMove(WPARAM btnState, int x, int y)
+{
+	if ((btnState & MK_LBUTTON) != 0)
+	{
+		// 마우스 한 픽셀의 이동을 0.25도에 대응시킵니다.
+		float dx = XMConvertToRadians(0.25f * static_cast<float>(x - mLastMousePos.x));
+		float dy = XMConvertToRadians(0.25f * static_cast<float>(y - mLastMousePos.y));
+
+		// 입력에 기초에 각도를 갱신해서 카메라가 상자 중심으로 공전하게 합니다.
+		mTheta += dx;
+		mPhi += dy;
+
+		// mPhi의 각도를 제한합니다.
+		mPhi = std::clamp(mPhi, 0.1f, (float)std::numbers::pi - 0.1f);
+	}
+	else if ((btnState & MK_RBUTTON) != 0)
+	{
+		// 마우스 한 픽셀의 이동을 0.005 단위에 대응시킵니다.
+		float dx = 0.2f * static_cast<float>(x - mLastMousePos.x);
+		float dy = 0.2f * static_cast<float>(y - mLastMousePos.y);
+
+		// 인력에 의해 카메라의 반지름을 업데이트 합니다.
+		mRadius += dx - dy;
+
+		// 반지름을 제한합니다.
+		mRadius = std::clamp(mRadius, 5.0f, 150.0f);
+	}
+
+	mLastMousePos.x = x;
+	mLastMousePos.y = y;
 }
 
 void DemoApp::LoadTextures()
@@ -325,17 +402,11 @@ std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> DemoApp::GetStaticSamplers()
 
 void DemoApp::BuildDescHeaps()
 {
-	//UINT objCount=(UINT)mOpaqueRitems.size();
-
-	// 프레임 마다 각 오브젝트의 CBV가 필요하고
-	// 프레임 마다 한 패스의 CBV가 필요합니다.
-	//no need for now
-	//UINT numDescriptors = (1) * GraphicsUtil::gNumFrameResources;
-	//mPassCbvOffset = 0 * GraphicsUtil::gNumFrameResources;
-	UINT numDescriptors = (UINT)mTextures.size();
+	const UINT textureDescriptorCount = (UINT)mTextures.size();
+	const UINT blurDescriptorCount = (UINT)4;
 
 	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
-	srvHeapDesc.NumDescriptors = numDescriptors;
+	srvHeapDesc.NumDescriptors = textureDescriptorCount + blurDescriptorCount;
 	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&mGeneralDescHeap)));
@@ -364,7 +435,7 @@ void DemoApp::BuildConstantBuffers()
 	}*/
 }
 
-void DemoApp::BuildShaderResourceView()
+void DemoApp::BuildDescViews()
 {
 	CD3DX12_CPU_DESCRIPTOR_HANDLE handle(mGeneralDescHeap->GetCPUDescriptorHandleForHeapStart());
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
@@ -382,6 +453,11 @@ void DemoApp::BuildShaderResourceView()
 		handle.Offset(1, mCbvSrvUavDescSize);
 		m.second->heapIndex = index++;
 	}
+
+	mBlurFilter->BuildDescriptors(
+		CD3DX12_CPU_DESCRIPTOR_HANDLE(mGeneralDescHeap->GetCPUDescriptorHandleForHeapStart(), (int)mTextures.size(), mCbvSrvUavDescSize),
+		CD3DX12_GPU_DESCRIPTOR_HANDLE(mGeneralDescHeap->GetGPUDescriptorHandleForHeapStart(), (int)mTextures.size(), mCbvSrvUavDescSize),
+		mCbvSrvUavDescSize);
 }
 
 void DemoApp::BuildRootSignature()
@@ -413,12 +489,42 @@ void DemoApp::BuildRootSignature()
 
 }
 
+void DemoApp::BuildPostProcessRootSignature()
+{
+	CD3DX12_ROOT_PARAMETER slotRootParams[3];
+
+	CD3DX12_DESCRIPTOR_RANGE srvTable;
+	srvTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
+
+	CD3DX12_DESCRIPTOR_RANGE uavTable;
+	uavTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
+
+	slotRootParams[0].InitAsConstants(12, 0);
+	slotRootParams[1].InitAsDescriptorTable(1, &srvTable);
+	slotRootParams[2].InitAsDescriptorTable(1, &uavTable);
+
+	Microsoft::WRL::ComPtr<ID3DBlob> serializedRootSig = nullptr;
+	Microsoft::WRL::ComPtr<ID3DBlob> errorBlob = nullptr;
+
+	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(_countof(slotRootParams), slotRootParams, 0, nullptr,
+		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+	D3D12SerializeRootSignature(&rootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1, serializedRootSig.GetAddressOf(), errorBlob.GetAddressOf());
+
+	md3dDevice->CreateRootSignature(0, serializedRootSig->GetBufferPointer(), serializedRootSig->GetBufferSize(),
+	                                IID_PPV_ARGS(mPostProcessRootSignature.GetAddressOf()));
+}
+
 void DemoApp::BuildShaderAndInputLayout()
 {
 	HRESULT result = S_OK;
 
-	mVSByteCode = GraphicsUtil::CompileShader(L"./Assets/Shaders/brdf.hlsl", nullptr, "VS", "vs_5_0");
-	mPSByteCode = GraphicsUtil::CompileShader(L"./Assets/Shaders/brdf.hlsl", nullptr, "PS", "ps_5_0");
+	mShaders["brdf_VS"] = GraphicsUtil::CompileShader(L"./Assets/Shaders/brdf.hlsl", nullptr, "VS", "vs_5_0");
+	mShaders["brdf_PS"] = GraphicsUtil::CompileShader(L"./Assets/Shaders/brdf.hlsl", nullptr, "PS", "ps_5_0");
+
+	mShaders["blurH_CS"] = GraphicsUtil::CompileShader(L"./Assets/Shaders/blur.hlsl", nullptr, "HorzBlurCS", "cs_5_0");
+	mShaders["blurV_CS"] = GraphicsUtil::CompileShader(L"./Assets/Shaders/blur.hlsl", nullptr, "VertBlurCS", "cs_5_0");
+
 
 	mInputLayout =
 	{
@@ -564,14 +670,15 @@ void DemoApp::BuildPSO()
 	ZeroMemory(&opaquePSODesc, sizeof(D3D12_GRAPHICS_PIPELINE_STATE_DESC));
 	opaquePSODesc.InputLayout = { mInputLayout.data(), (UINT)mInputLayout.size() };
 	opaquePSODesc.pRootSignature = mRootSig.Get();
+	
 	opaquePSODesc.VS = {
-		reinterpret_cast<BYTE*>(mVSByteCode->GetBufferPointer()),
-		mVSByteCode->GetBufferSize()
+		reinterpret_cast<BYTE*>(mShaders["brdf_VS"]->GetBufferPointer()),
+		mShaders["brdf_VS"]->GetBufferSize()
 	};
 
 	opaquePSODesc.PS = {
-		reinterpret_cast<BYTE*>(mPSByteCode->GetBufferPointer()),
-		mPSByteCode->GetBufferSize()
+		reinterpret_cast<BYTE*>(mShaders["brdf_PS"]->GetBufferPointer()),
+		mShaders["brdf_PS"]->GetBufferSize()
 	};
 
 	opaquePSODesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
@@ -585,12 +692,34 @@ void DemoApp::BuildPSO()
 	opaquePSODesc.SampleDesc.Quality = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
 	opaquePSODesc.DSVFormat = mDepthStencilFormat;
 
-	//ThrowIfFailed();
 	auto reuslt = md3dDevice->CreateGraphicsPipelineState(&opaquePSODesc, IID_PPV_ARGS(&mPSOs["opaque"]));
 
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC opaqueWireframePsoDesc = opaquePSODesc;
 	opaqueWireframePsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&opaqueWireframePsoDesc, IID_PPV_ARGS(&mPSOs["opaque_wireframe"])));
+
+	//blur 
+	{
+		D3D12_COMPUTE_PIPELINE_STATE_DESC horzBlurPSO = {};
+		horzBlurPSO.pRootSignature = mPostProcessRootSignature.Get();
+		horzBlurPSO.CS =
+		{
+			reinterpret_cast<BYTE*>(mShaders["blurH_CS"]->GetBufferPointer()),
+			mShaders["blurH_CS"]->GetBufferSize()
+		};
+		horzBlurPSO.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
+		ThrowIfFailed(md3dDevice->CreateComputePipelineState(&horzBlurPSO, IID_PPV_ARGS(&mPSOs["blurH"])));
+
+		D3D12_COMPUTE_PIPELINE_STATE_DESC vertBlurPSO = {};
+		vertBlurPSO.pRootSignature = mPostProcessRootSignature.Get();
+		vertBlurPSO.CS =
+		{
+			reinterpret_cast<BYTE*>(mShaders["blurV_CS"]->GetBufferPointer()),
+			mShaders["blurV_CS"]->GetBufferSize()
+		};
+		vertBlurPSO.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
+		ThrowIfFailed(md3dDevice->CreateComputePipelineState(&vertBlurPSO, IID_PPV_ARGS(&mPSOs["blurV"])));
+	}
 }
 
 void DemoApp::BuildFrameResources()

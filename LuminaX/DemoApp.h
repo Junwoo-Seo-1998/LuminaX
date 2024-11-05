@@ -7,6 +7,7 @@
 #include "Buffers.h"
 #include "FrameResource.h"
 #include "GraphicsUtil.h"
+#include "BlurFilter.h"
 
 struct MeshGeometry;
 
@@ -102,6 +103,10 @@ private:
 	virtual void Update() override;
 	virtual void Draw() override;
 
+	virtual void OnMouseDown(WPARAM btnState, int x, int y) override;
+	virtual void OnMouseUp(WPARAM btnState, int x, int y) override;
+	virtual void OnMouseMove(WPARAM btnState, int x, int y) override;
+
 	void LoadTextures();
 	void UpdateCamera();
 	void UpdateObjectCBs();
@@ -112,8 +117,9 @@ private:
 
 	void BuildDescHeaps();
 	void BuildConstantBuffers();
-	void BuildShaderResourceView();
+	void BuildDescViews();
 	void BuildRootSignature();
+	void BuildPostProcessRootSignature();
 	void BuildShaderAndInputLayout();
     void BuildShapeGeometry();
     void BuildPSO();
@@ -133,9 +139,8 @@ private:
 	UINT mPassCbvOffset = 0;
 	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> mGeneralDescHeap;
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> mRootSig;
+	Microsoft::WRL::ComPtr<ID3D12RootSignature> mPostProcessRootSignature;
 
-	Microsoft::WRL::ComPtr<ID3DBlob> mVSByteCode;
-	Microsoft::WRL::ComPtr<ID3DBlob> mPSByteCode;
 	std::vector<D3D12_INPUT_ELEMENT_DESC> mInputLayout;
 
 	std::vector<std::unique_ptr<RenderItem>> mAllRitems;
@@ -145,7 +150,10 @@ private:
 	std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> mGeometries;
 	std::unordered_map<std::string, std::unique_ptr<Material>> mMaterials;
 	std::unordered_map<std::string, std::unique_ptr<Texture>> mTextures;
+	std::unordered_map<std::string, Microsoft::WRL::ComPtr<ID3DBlob>> mShaders;
 	std::unordered_map<std::string, Microsoft::WRL::ComPtr<ID3D12PipelineState>> mPSOs;
+
+	std::unique_ptr<BlurFilter> mBlurFilter;
 
 
 	DirectX::XMFLOAT3 mEyePos = { 0.0f, 0.0f, 0.0f };
@@ -158,4 +166,6 @@ private:
 
 	float mSunTheta = 1.25f * DirectX::XM_PI;
 	float mSunPhi = DirectX::XM_PIDIV4;
+
+	POINT mLastMousePos;
 };
