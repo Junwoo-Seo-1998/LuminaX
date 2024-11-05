@@ -156,7 +156,14 @@ private:
 
 	std::vector<std::unique_ptr<RenderItem>> mAllRitems;
 
-	std::vector<RenderItem*> mOpaqueRitems;
+	enum class RenderLayer : int
+	{
+		Opaque = 0,
+		Sky,
+		Count
+	};
+
+	std::vector<RenderItem*> mRitemLayer[(int)RenderLayer::Count];
 
 	std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> mGeometries;
 	std::unordered_map<std::string, std::unique_ptr<Material>> mMaterials;

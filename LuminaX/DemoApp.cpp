@@ -148,10 +148,16 @@ void DemoApp::Draw()
 	auto matBuffer = mCurrFrameResource->MaterialBuffer->Resource();
 	mCommandList->SetGraphicsRootConstantBufferView(2, matBuffer->GetGPUVirtualAddress());
 
-	mCommandList->SetGraphicsRootDescriptorTable(3, mGeneralDescHeap->GetGPUDescriptorHandleForHeapStart());
+	CD3DX12_GPU_DESCRIPTOR_HANDLE skyTexDescriptor(mGeneralDescHeap->GetGPUDescriptorHandleForHeapStart());
+	skyTexDescriptor.Offset((int)mTextures.size() - 1, mCbvSrvUavDescSize);
+	mCommandList->SetGraphicsRootDescriptorTable(3, skyTexDescriptor);
 
-	DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
+	mCommandList->SetGraphicsRootDescriptorTable(4, mGeneralDescHeap->GetGPUDescriptorHandleForHeapStart());
 
+	DrawRenderItems(mCommandList.Get(), mRitemLayer[(int)RenderLayer::Opaque]);
+
+	mCommandList->SetPipelineState(mPSOs["sky"].Get());
+	DrawRenderItems(mCommandList.Get(), mRitemLayer[(int)RenderLayer::Sky]);
 	//blur
 	if(false)
 	{
@@ -243,11 +249,17 @@ void DemoApp::OnMouseMove(WPARAM btnState, int x, int y)
 
 void DemoApp::LoadTextures()
 {
+	auto skyTex = std::make_unique<Texture>();
+	skyTex->Name = "skyTex";
+	skyTex->Filename = L"./Assets/Textures/cube.dds";
+	GraphicsUtil::LoadTextureFromFile(skyTex->Filename, md3dDevice.Get(), mCommandList.Get(), skyTex->Resource, skyTex->UploadHeap);
+
 	auto grassTex = std::make_unique<Texture>();
 	grassTex->Name = "grassTex";
 	grassTex->Filename = L"./Assets/Textures/grass.png";
 	GraphicsUtil::LoadTextureFromFile(grassTex->Filename, md3dDevice.Get(), mCommandList.Get(), grassTex->Resource, grassTex->UploadHeap);
 
+	mTextures[skyTex->Name] = std::move(skyTex);
 	mTextures[grassTex->Name] = std::move(grassTex);
 }
 
@@ -459,11 +471,18 @@ void DemoApp::BuildDescViews()
 	int index = 0;
 	for (auto& m : mTextures)
 	{
+		if(m.first=="skyTex")
+			continue;
 		srvDesc.Format = m.second->Resource->GetDesc().Format;
 		md3dDevice->CreateShaderResourceView(m.second->Resource.Get(), &srvDesc, handle);
 		handle.Offset(1, mCbvSrvUavDescSize);
 		m.second->heapIndex = index++;
 	}
+
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+	srvDesc.Format = mTextures["skyTex"]->Resource->GetDesc().Format;
+	md3dDevice->CreateShaderResourceView(mTextures["skyTex"]->Resource.Get(), &srvDesc, handle);
+	mTextures["skyTex"]->heapIndex = index;
 
 	mBlurFilter->BuildDescriptors(
 		CD3DX12_CPU_DESCRIPTOR_HANDLE(mGeneralDescHeap->GetCPUDescriptorHandleForHeapStart(), (int)mTextures.size(), mCbvSrvUavDescSize),
@@ -473,16 +492,20 @@ void DemoApp::BuildDescViews()
 
 void DemoApp::BuildRootSignature()
 {
-	CD3DX12_ROOT_PARAMETER slotRootParams[4];
+	CD3DX12_ROOT_PARAMETER slotRootParams[5];
 
 	//texture
+	CD3DX12_DESCRIPTOR_RANGE texSky;
+	texSky.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0);
+
 	CD3DX12_DESCRIPTOR_RANGE tex;
-	tex.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0);
+	tex.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 1, 0);
 
 	slotRootParams[0].InitAsConstantBufferView(0);
 	slotRootParams[1].InitAsConstantBufferView(1);
 	slotRootParams[2].InitAsShaderResourceView(0, 1);
-	slotRootParams[3].InitAsDescriptorTable(1, &tex, D3D12_SHADER_VISIBILITY_PIXEL);
+	slotRootParams[3].InitAsDescriptorTable(1, &texSky, D3D12_SHADER_VISIBILITY_PIXEL);
+	slotRootParams[4].InitAsDescriptorTable(1, &tex, D3D12_SHADER_VISIBILITY_PIXEL);
 
 	auto staticSamplers = GetStaticSamplers();
 
@@ -533,9 +556,11 @@ void DemoApp::BuildShaderAndInputLayout()
 	mShaders["brdf_VS"] = GraphicsUtil::CompileShader(L"./Assets/Shaders/brdf.hlsl", nullptr, "VS", "vs_5_1");
 	mShaders["brdf_PS"] = GraphicsUtil::CompileShader(L"./Assets/Shaders/brdf.hlsl", nullptr, "PS", "ps_5_1");
 
+	mShaders["skyVS"] = GraphicsUtil::CompileShader(L"./Assets/Shaders/Sky.hlsl", nullptr, "VS", "vs_5_1");
+	mShaders["skyPS"] = GraphicsUtil::CompileShader(L"./Assets/Shaders/Sky.hlsl", nullptr, "PS", "ps_5_1");
+
 	mShaders["blurH_CS"] = GraphicsUtil::CompileShader(L"./Assets/Shaders/blur.hlsl", nullptr, "HorzBlurCS", "cs_5_1");
 	mShaders["blurV_CS"] = GraphicsUtil::CompileShader(L"./Assets/Shaders/blur.hlsl", nullptr, "VertBlurCS", "cs_5_1");
-
 
 	mInputLayout =
 	{
@@ -709,6 +734,28 @@ void DemoApp::BuildPSO()
 	opaqueWireframePsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&opaqueWireframePsoDesc, IID_PPV_ARGS(&mPSOs["opaque_wireframe"])));
 
+	//skybox
+	{
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC skyPsoDesc = opaquePSODesc;
+
+		// 카메라에서 구의 안쪽을 렌더링하기 때문에 컬링을 꺼줍니다.
+		skyPsoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+
+		skyPsoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+		skyPsoDesc.VS =
+		{
+			reinterpret_cast<BYTE*>(mShaders["skyVS"]->GetBufferPointer()),
+			mShaders["skyVS"]->GetBufferSize()
+		};
+		skyPsoDesc.PS =
+		{
+			reinterpret_cast<BYTE*>(mShaders["skyPS"]->GetBufferPointer()),
+			mShaders["skyPS"]->GetBufferSize()
+		};
+		ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&skyPsoDesc, IID_PPV_ARGS(&mPSOs["sky"])));
+	}
+
+
 	//blur 
 	{
 		D3D12_COMPUTE_PIPELINE_STATE_DESC horzBlurPSO = {};
@@ -745,6 +792,16 @@ void DemoApp::BuildFrameResources()
 void DemoApp::BuildMaterials()
 {
 	int matCBIndex = 0;
+
+	auto sky = std::make_unique<Material>();
+	sky->Name = "sky";
+	sky->MatCBIndex = matCBIndex++;
+	sky->DiffuseSrvHeapIndex = mTextures["skyTex"]->heapIndex;
+	sky->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+	sky->FresnelR0 = XMFLOAT3(0.1f, 0.1f, 0.1f);
+	sky->Roughness = 1.0f;
+
+	
 	auto box = std::make_unique<Material>();
 	box->Name = "box";
 	box->MatCBIndex = matCBIndex++;
@@ -756,7 +813,7 @@ void DemoApp::BuildMaterials()
 	auto grass = std::make_unique<Material>();
 	grass->Name = "grass";
 	grass->MatCBIndex = matCBIndex++;
-	grass->DiffuseSrvHeapIndex = 0;
+	grass->DiffuseSrvHeapIndex = mTextures["grassTex"]->heapIndex;
 
 	auto cylinder = std::make_unique<Material>();
 	cylinder->Name = "cylinder";
@@ -772,33 +829,54 @@ void DemoApp::BuildMaterials()
 	mMaterials["grass"] = std::move(grass);
 	mMaterials["cylinder"] = std::move(cylinder);
 	mMaterials["sphere"] = std::move(sphere);
+	mMaterials["sky"] = std::move(sky);
 }
 
 void DemoApp::BuildRenderItems()
 {
+	UINT objCBIndex = 0;
+
+	auto skyRitem = std::make_unique<RenderItem>();
+	XMStoreFloat4x4(&skyRitem->World, XMMatrixScaling(5000.0f, 5000.0f, 5000.0f));
+	skyRitem->TexTransform = GraphicsUtil::Identity4x4();
+	skyRitem->ObjCBIndex = objCBIndex++;
+	skyRitem->Mat = mMaterials["sky"].get();
+	skyRitem->Geo = mGeometries["shapeGeo"].get();
+	skyRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	skyRitem->IndexCount = skyRitem->Geo->DrawArgs["sphere"].IndexCount;
+	skyRitem->StartIndexLocation = skyRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
+	skyRitem->BaseVertexLocation = skyRitem->Geo->DrawArgs["sphere"].BaseVertexLocation;
+
+	mRitemLayer[(int)RenderLayer::Sky].push_back(skyRitem.get());
+	mAllRitems.push_back(std::move(skyRitem));
+
+
 	auto boxRitem = std::make_unique<RenderItem>();
 	XMStoreFloat4x4(&boxRitem->World, XMMatrixScaling(2.0f, 2.0f, 2.0f) * XMMatrixTranslation(0.0f, 0.5f, -3.0f));
-	boxRitem->ObjCBIndex = 0;
+	boxRitem->ObjCBIndex = objCBIndex++;
 	boxRitem->Geo = mGeometries["shapeGeo"].get();
 	boxRitem->Mat = mMaterials["box"].get();
 	boxRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 	boxRitem->IndexCount = (UINT)boxRitem->Geo->DrawArgs["box"].IndexCount;
 	boxRitem->StartIndexLocation = boxRitem->Geo->DrawArgs["box"].StartIndexLocation;
 	boxRitem->BaseVertexLocation = boxRitem->Geo->DrawArgs["box"].BaseVertexLocation;
+
+	mRitemLayer[(int)RenderLayer::Opaque].push_back(boxRitem.get());
 	mAllRitems.push_back(std::move(boxRitem));
 
 
 	auto gridRitem = std::make_unique<RenderItem>();
-	gridRitem->ObjCBIndex = 1;
+	gridRitem->ObjCBIndex = objCBIndex++;
 	gridRitem->Geo = mGeometries["shapeGeo"].get();
 	gridRitem->Mat = mMaterials["grass"].get();
 	gridRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 	gridRitem->IndexCount = gridRitem->Geo->DrawArgs["grid"].IndexCount;
 	gridRitem->StartIndexLocation = gridRitem->Geo->DrawArgs["grid"].StartIndexLocation;
 	gridRitem->BaseVertexLocation = gridRitem->Geo->DrawArgs["grid"].BaseVertexLocation;
+
+	mRitemLayer[(int)RenderLayer::Opaque].push_back(gridRitem.get());
 	mAllRitems.push_back(std::move(gridRitem));
 
-	UINT objCBIndex = 2;
 	for (int i = 0; i < 5; ++i)
 	{
 		auto leftCylRitem = std::make_unique<RenderItem>();
@@ -848,15 +926,16 @@ void DemoApp::BuildRenderItems()
 		rightSphereRitem->StartIndexLocation = rightSphereRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
 		rightSphereRitem->BaseVertexLocation = rightSphereRitem->Geo->DrawArgs["sphere"].BaseVertexLocation;
 
+		mRitemLayer[(int)RenderLayer::Opaque].push_back(leftCylRitem.get());
+		mRitemLayer[(int)RenderLayer::Opaque].push_back(rightCylRitem.get());
+		mRitemLayer[(int)RenderLayer::Opaque].push_back(leftSphereRitem.get());
+		mRitemLayer[(int)RenderLayer::Opaque].push_back(rightSphereRitem.get());
+
 		mAllRitems.push_back(std::move(leftCylRitem));
 		mAllRitems.push_back(std::move(rightCylRitem));
 		mAllRitems.push_back(std::move(leftSphereRitem));
-		mAllRitems.push_back(std::move(rightSphereRitem)); 
+		mAllRitems.push_back(std::move(rightSphereRitem));
 	}
-
-	// 모든 렌더 아이템들은 불투명합니다. 일단은..
-	for (auto& e : mAllRitems)
-		mOpaqueRitems.push_back(e.get());
 }
 
 void DemoApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems)
