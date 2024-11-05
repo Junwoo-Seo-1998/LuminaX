@@ -4,6 +4,8 @@
 #define NUM_DIR_LIGHTS 1
 #endif
 
+#define PI 3.14159265358979f
+
 struct Light
 {
     float3 Strength;
@@ -14,7 +16,6 @@ struct Light
     float SpotPower; // spot light only
 };
 
-
 SamplerState gsamPointWrap : register(s0);
 SamplerState gsamPointClamp : register(s1);
 SamplerState gsamLinearWrap : register(s2);
@@ -22,25 +23,33 @@ SamplerState gsamLinearClamp : register(s3);
 SamplerState gsamAnisotropicWrap : register(s4);
 SamplerState gsamAnisotropicClamp : register(s5);
 
-// Constant data that varies per frame.
+struct MaterialData
+{
+    float4 DiffuseAlbedo;
+    float3 FresnelR0;
+    float Roughness;
+    float4x4 MatTransform;
+    int DiffuseTexIndex;
+    int PadTexIndex0;
+    int PadTexIndex1;
+    int PadTexIndex2;
+};
 
+Texture2D gTextures[4] : register(t0);
+StructuredBuffer<MaterialData> gMaterialData : register(t0, space1);
+
+// Constant data that varies per frame.
 cbuffer cbPerObject : register(b0)
 {
     float4x4 gWorld;
     float4x4 gTexTransform;
+    uint gMaterialIndex;
+    uint gObjPad0;
+    uint gObjPad1;
+    uint gObjPad2;
 };
 
-Texture2D gDiffuseMap : register(t0);
-
-cbuffer cbMaterial : register(b1)
-{
-    float4 gDiffuseAlbedo;
-    float3 gFresnelR0;
-    float gRoughness;
-    float4x4 gMatTransform;
-}
-
-cbuffer cbPass : register(b2)
+cbuffer cbPass : register(b1)
 {
     float4x4 gView;
     float4x4 gInvView;
@@ -64,8 +73,6 @@ cbuffer cbPass : register(b2)
     // are spot lights for a maximum of MaxLights per object.
     Light gLights[MaxLights];
 };
-
-
 
 struct VertexIn
 {
@@ -96,14 +103,16 @@ VertexOut VS(VertexIn vin)
     // Transform to homogeneous clip space
     vout.PosH = mul(posW, gViewProj);
 
+    // Fetch the material data.
+    MaterialData matData = gMaterialData[gMaterialIndex];
+    
     // Output vertex attributes for interpolation across triangle.
-    float4 texC = mul(float4(vin.TexC, 0.0f, 1.0f), gTexTransform);
-    vout.TexC = mul(texC, gMatTransform).xy;
+	float4 texC = mul(float4(vin.TexC, 0.0f, 1.0f), gTexTransform);
+	vout.TexC = mul(texC, matData.MatTransform).xy;
 
     return vout;
 }
 
-#define PI 3.14159265358979f
 
 float D_GGX(float NdotH, float roughness) {
     float a = NdotH * roughness;
@@ -227,7 +236,9 @@ float3 BRDF(Light gLights[MaxLights], Material mat,
 
 float4 PS(VertexOut pin) : SV_Target
 {
-    float3 diffuseAlbedo = (gDiffuseMap.Sample(gsamAnisotropicWrap, pin.TexC) * gDiffuseAlbedo).xyz;
+    MaterialData matData = gMaterialData[gMaterialIndex];
+    
+    float3 diffuseAlbedo = (gTextures[matData.DiffuseTexIndex].Sample(gsamAnisotropicWrap, pin.TexC) * matData.DiffuseAlbedo).xyz;
     //float3 diffuseAlbedo = gDiffuseAlbedo;
     //float3 diffuseAlbedo = gDiffuseMap.Sample(gsamAnisotropicWrap, pin.TexC);
     // Interpolating normal can unnormalize it, so renormalize it.
@@ -240,7 +251,7 @@ float4 PS(VertexOut pin) : SV_Target
     float metallic = 0.0f;
     F0 = lerp(F0, diffuseAlbedo, metallic);
 
-    Material mat = { diffuseAlbedo, gFresnelR0, gRoughness, 0.0f };
+    Material mat = { diffuseAlbedo, F0, matData.Roughness, 0.0f };
     float3 color=BRDF(gLights, mat, pin.PosW, pin.NormalW, view);
 
     //gama correction 

@@ -82,7 +82,7 @@ struct PassConstants
 };
 
 
-struct MaterialConstants
+struct MaterialData
 {
 	DirectX::XMFLOAT4 DiffuseAlbedo = { 1.0f, 1.0f, 1.0f, 1.0f };
 	DirectX::XMFLOAT3 FresnelR0 = { 0.01f, 0.01f, 0.01f };
@@ -90,6 +90,11 @@ struct MaterialConstants
 
 	// 텍스쳐 맵핑에서 사용됩니다.
 	DirectX::XMFLOAT4X4 MatTransform = GraphicsUtil::Identity4x4();
+
+	int DiffuseTexIndex = -1;
+	int PadTexIndex0 = -1;
+	int PadTexIndex1 = -1;
+	int PadTexIndex2 = -1;
 };
 
 
@@ -110,7 +115,7 @@ private:
 	void LoadTextures();
 	void UpdateCamera();
 	void UpdateObjectCBs();
-	void UpdateMaterialCBs();
+	void UpdateMaterialBuffer();
 	void UpdateMainPassCB();
 
 	std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> GetStaticSamplers();

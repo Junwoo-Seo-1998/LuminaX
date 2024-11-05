@@ -5,9 +5,10 @@
 
 #include "Buffers.h"
 
+
 struct PassConstants;
 struct ObjectConstants;
-struct MaterialConstants;
+struct MaterialData;
 
 class FrameResource
 {
@@ -19,8 +20,9 @@ public:
 
 	Microsoft::WRL::ComPtr<ID3D12CommandAllocator> CmdListAlloc;
 	std::unique_ptr<UploadBuffer<PassConstants>> PassCB = nullptr;
-	std::unique_ptr<UploadBuffer<MaterialConstants>> MaterialCB = nullptr;
 	std::unique_ptr<UploadBuffer<ObjectConstants>> ObjectCB = nullptr;
+
+	std::unique_ptr<UploadBuffer<MaterialData>> MaterialBuffer = nullptr;
 
 	UINT64 Fence = 0;
 };

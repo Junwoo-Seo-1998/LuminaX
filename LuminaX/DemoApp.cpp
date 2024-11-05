@@ -95,7 +95,7 @@ void DemoApp::Update()
 	}
 
 	UpdateObjectCBs();
-	UpdateMaterialCBs();
+	UpdateMaterialBuffer();
 	UpdateMainPassCB();
 }
 
@@ -143,7 +143,12 @@ void DemoApp::Draw()
 	mCommandList->SetGraphicsRootSignature(mRootSig.Get());
 
 	auto passCB = mCurrFrameResource->PassCB->Resource();
-	mCommandList->SetGraphicsRootConstantBufferView(3, passCB->GetGPUVirtualAddress());
+	mCommandList->SetGraphicsRootConstantBufferView(1, passCB->GetGPUVirtualAddress());
+
+	auto matBuffer = mCurrFrameResource->MaterialBuffer->Resource();
+	mCommandList->SetGraphicsRootConstantBufferView(2, matBuffer->GetGPUVirtualAddress());
+
+	mCommandList->SetGraphicsRootDescriptorTable(3, mGeneralDescHeap->GetGPUDescriptorHandleForHeapStart());
 
 	DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
 
@@ -284,22 +289,25 @@ void DemoApp::UpdateObjectCBs()
 	}
 }
 
-void DemoApp::UpdateMaterialCBs()
+void DemoApp::UpdateMaterialBuffer()
 {
-	auto currentMatrialCB = mCurrFrameResource->MaterialCB.get();
+	auto currMaterialBuffer = mCurrFrameResource->MaterialBuffer.get();
 	for (auto& [name, mat]:mMaterials)
 	{
 		//update only when it was updated
 		if(mat->NumFramesDirty>0)
 		{
-			MaterialConstants matConst;
-			matConst.DiffuseAlbedo = mat->DiffuseAlbedo;
-			matConst.FresnelR0 = mat->FresnelR0;
-			matConst.Roughness = mat->Roughness;
-			matConst.MatTransform = mat->MatTransform;
+			MaterialData matData;
 
-			currentMatrialCB->CopyData(mat->MatCBIndex, matConst);
+			XMMATRIX matTransform = XMLoadFloat4x4(&mat->MatTransform);
+			XMStoreFloat4x4(&matData.MatTransform, XMMatrixTranspose(matTransform));
+			
+			matData.DiffuseAlbedo = mat->DiffuseAlbedo;
+			matData.FresnelR0 = mat->FresnelR0;
+			matData.Roughness = mat->Roughness;
+			matData.DiffuseTexIndex = mat->DiffuseSrvHeapIndex;
 
+			currMaterialBuffer->CopyData(mat->MatCBIndex, matData);
 			mat->NumFramesDirty--;
 		}
 	}
@@ -466,12 +474,12 @@ void DemoApp::BuildRootSignature()
 
 	//texture
 	CD3DX12_DESCRIPTOR_RANGE tex;
-	tex.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
+	tex.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0);
 
-	slotRootParams[0].InitAsDescriptorTable(1, &tex, D3D12_SHADER_VISIBILITY_PIXEL);
-	slotRootParams[1].InitAsConstantBufferView(0);
-	slotRootParams[2].InitAsConstantBufferView(1);
-	slotRootParams[3].InitAsConstantBufferView(2);
+	slotRootParams[0].InitAsConstantBufferView(0);
+	slotRootParams[1].InitAsConstantBufferView(1);
+	slotRootParams[2].InitAsShaderResourceView(0, 1);
+	slotRootParams[3].InitAsDescriptorTable(1, &tex, D3D12_SHADER_VISIBILITY_PIXEL);
 
 	auto staticSamplers = GetStaticSamplers();
 
@@ -519,11 +527,11 @@ void DemoApp::BuildShaderAndInputLayout()
 {
 	HRESULT result = S_OK;
 
-	mShaders["brdf_VS"] = GraphicsUtil::CompileShader(L"./Assets/Shaders/brdf.hlsl", nullptr, "VS", "vs_5_0");
-	mShaders["brdf_PS"] = GraphicsUtil::CompileShader(L"./Assets/Shaders/brdf.hlsl", nullptr, "PS", "ps_5_0");
+	mShaders["brdf_VS"] = GraphicsUtil::CompileShader(L"./Assets/Shaders/brdf.hlsl", nullptr, "VS", "vs_5_1");
+	mShaders["brdf_PS"] = GraphicsUtil::CompileShader(L"./Assets/Shaders/brdf.hlsl", nullptr, "PS", "ps_5_1");
 
-	mShaders["blurH_CS"] = GraphicsUtil::CompileShader(L"./Assets/Shaders/blur.hlsl", nullptr, "HorzBlurCS", "cs_5_0");
-	mShaders["blurV_CS"] = GraphicsUtil::CompileShader(L"./Assets/Shaders/blur.hlsl", nullptr, "VertBlurCS", "cs_5_0");
+	mShaders["blurH_CS"] = GraphicsUtil::CompileShader(L"./Assets/Shaders/blur.hlsl", nullptr, "HorzBlurCS", "cs_5_1");
+	mShaders["blurV_CS"] = GraphicsUtil::CompileShader(L"./Assets/Shaders/blur.hlsl", nullptr, "VertBlurCS", "cs_5_1");
 
 
 	mInputLayout =
@@ -851,10 +859,8 @@ void DemoApp::BuildRenderItems()
 void DemoApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems)
 {
 	UINT objCBByteSize = GraphicsUtil::CalcConstantBufferByteSize(sizeof(ObjectConstants));
-	UINT matCBByteSize = GraphicsUtil::CalcConstantBufferByteSize(sizeof(MaterialConstants));
 
 	auto objCB = mCurrFrameResource->ObjectCB->Resource();
-	auto matCB = mCurrFrameResource->MaterialCB->Resource();
 	// 각 렌더 항목에 대해서...
 	for (size_t i = 0; i < ritems.size(); ++i)
 	{
@@ -866,15 +872,8 @@ void DemoApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vec
 		cmdList->IASetIndexBuffer(&indexView);
 		cmdList->IASetPrimitiveTopology(ri->PrimitiveType);
 
-		/*CD3DX12_GPU_DESCRIPTOR_HANDLE tex(mGeneralDescHeap->GetGPUDescriptorHandleForHeapStart());
-		tex.Offset(ri->Mat->DiffuseSrvHeapIndex, mCbvSrvUavDescSize);*/
-		cmdList->SetGraphicsRootDescriptorTable(0, mGeneralDescHeap->GetGPUDescriptorHandleForHeapStart());
-
 		D3D12_GPU_VIRTUAL_ADDRESS objCBAddress = objCB->GetGPUVirtualAddress() + ri->ObjCBIndex * objCBByteSize;
-		cmdList->SetGraphicsRootConstantBufferView(1, objCBAddress);
-
-		D3D12_GPU_VIRTUAL_ADDRESS matCBAddress = matCB->GetGPUVirtualAddress() + ri->Mat->MatCBIndex * matCBByteSize;
-		cmdList->SetGraphicsRootConstantBufferView(2, matCBAddress);
+		cmdList->SetGraphicsRootConstantBufferView(0, objCBAddress);
 
 		cmdList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
 	}
