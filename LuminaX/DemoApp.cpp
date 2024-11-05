@@ -153,7 +153,7 @@ void DemoApp::Draw()
 	DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
 
 	//blur
-	if(true)
+	if(false)
 	{
 		mBlurFilter->Execute(mCommandList.Get(), mPostProcessRootSignature.Get(),
 			mPSOs["blurH"].Get(), mPSOs["blurV"].Get(), CurrentBackBuffer(), 4);
@@ -277,9 +277,12 @@ void DemoApp::UpdateObjectCBs()
 		if (e->NumFramesDirty > 0)
 		{
 			XMMATRIX world = XMLoadFloat4x4(&e->World);
+			XMMATRIX texTransform = XMLoadFloat4x4(&e->TexTransform);
 
 			ObjectConstants objConstants;
 			XMStoreFloat4x4(&objConstants.World, XMMatrixTranspose(world));
+			XMStoreFloat4x4(&objConstants.TexTransform, XMMatrixTranspose(texTransform));
+			objConstants.MaterialIndex = e->Mat->MatCBIndex;
 
 			currObjectCB->CopyData(e->ObjCBIndex, objConstants);
 
@@ -748,7 +751,7 @@ void DemoApp::BuildMaterials()
 	box->DiffuseAlbedo = XMFLOAT4(0.2f, 0.6f, 0.2f, 1.0f);
 	box->FresnelR0 = XMFLOAT3(0.01f, 0.01f, 0.01f);
 	box->Roughness = 0.125f;
-	box->DiffuseSrvHeapIndex = 0;
+	box->DiffuseSrvHeapIndex = -1;
 
 	auto grass = std::make_unique<Material>();
 	grass->Name = "grass";
@@ -758,17 +761,17 @@ void DemoApp::BuildMaterials()
 	auto cylinder = std::make_unique<Material>();
 	cylinder->Name = "cylinder";
 	cylinder->MatCBIndex = matCBIndex++;
-	cylinder->DiffuseSrvHeapIndex = 0;
+	cylinder->DiffuseSrvHeapIndex = -1;
 
 	auto sphere = std::make_unique<Material>();
 	sphere->Name = "sphere";
 	sphere->MatCBIndex = matCBIndex++;
-	sphere->DiffuseSrvHeapIndex = 0;
+	sphere->DiffuseSrvHeapIndex = -1;
 
 	mMaterials["box"] = std::move(box);
-	/*mMaterials["grass"] = std::move(grass);
+	mMaterials["grass"] = std::move(grass);
 	mMaterials["cylinder"] = std::move(cylinder);
-	mMaterials["sphere"] = std::move(sphere);*/
+	mMaterials["sphere"] = std::move(sphere);
 }
 
 void DemoApp::BuildRenderItems()
@@ -788,7 +791,7 @@ void DemoApp::BuildRenderItems()
 	auto gridRitem = std::make_unique<RenderItem>();
 	gridRitem->ObjCBIndex = 1;
 	gridRitem->Geo = mGeometries["shapeGeo"].get();
-	gridRitem->Mat = mMaterials["box"].get();
+	gridRitem->Mat = mMaterials["grass"].get();
 	gridRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 	gridRitem->IndexCount = gridRitem->Geo->DrawArgs["grid"].IndexCount;
 	gridRitem->StartIndexLocation = gridRitem->Geo->DrawArgs["grid"].StartIndexLocation;
@@ -812,7 +815,7 @@ void DemoApp::BuildRenderItems()
 		XMStoreFloat4x4(&leftCylRitem->World, rightCylWorld);
 		leftCylRitem->ObjCBIndex = objCBIndex++;
 		leftCylRitem->Geo = mGeometries["shapeGeo"].get();
-		leftCylRitem->Mat = mMaterials["box"].get();
+		leftCylRitem->Mat = mMaterials["cylinder"].get();
 		leftCylRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		leftCylRitem->IndexCount = leftCylRitem->Geo->DrawArgs["cylinder"].IndexCount;
 		leftCylRitem->StartIndexLocation = leftCylRitem->Geo->DrawArgs["cylinder"].StartIndexLocation;
@@ -821,7 +824,7 @@ void DemoApp::BuildRenderItems()
 		XMStoreFloat4x4(&rightCylRitem->World, leftCylWorld);
 		rightCylRitem->ObjCBIndex = objCBIndex++;
 		rightCylRitem->Geo = mGeometries["shapeGeo"].get();
-		rightCylRitem->Mat = mMaterials["box"].get();
+		rightCylRitem->Mat = mMaterials["cylinder"].get();
 		rightCylRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		rightCylRitem->IndexCount = rightCylRitem->Geo->DrawArgs["cylinder"].IndexCount;
 		rightCylRitem->StartIndexLocation = rightCylRitem->Geo->DrawArgs["cylinder"].StartIndexLocation;
@@ -830,7 +833,7 @@ void DemoApp::BuildRenderItems()
 		XMStoreFloat4x4(&leftSphereRitem->World, leftSphereWorld);
 		leftSphereRitem->ObjCBIndex = objCBIndex++;
 		leftSphereRitem->Geo = mGeometries["shapeGeo"].get();
-		leftSphereRitem->Mat = mMaterials["box"].get();
+		leftSphereRitem->Mat = mMaterials["sphere"].get();
 		leftSphereRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		leftSphereRitem->IndexCount = leftSphereRitem->Geo->DrawArgs["sphere"].IndexCount;
 		leftSphereRitem->StartIndexLocation = leftSphereRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
@@ -839,7 +842,7 @@ void DemoApp::BuildRenderItems()
 		XMStoreFloat4x4(&rightSphereRitem->World, rightSphereWorld);
 		rightSphereRitem->ObjCBIndex = objCBIndex++;
 		rightSphereRitem->Geo = mGeometries["shapeGeo"].get();
-		rightSphereRitem->Mat = mMaterials["box"].get();
+		rightSphereRitem->Mat = mMaterials["sphere"].get();
 		rightSphereRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		rightSphereRitem->IndexCount = rightSphereRitem->Geo->DrawArgs["sphere"].IndexCount;
 		rightSphereRitem->StartIndexLocation = rightSphereRitem->Geo->DrawArgs["sphere"].StartIndexLocation;

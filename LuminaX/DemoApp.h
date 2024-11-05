@@ -22,6 +22,8 @@ struct RenderItem
 		0.0f, 0.0f, 1.0f, 0.0f,
 		0.0f, 0.0f, 0.0f, 1.0f);
 
+    DirectX::XMFLOAT4X4 TexTransform = GraphicsUtil::Identity4x4();
+
     // 오브젝트의 데이터가 변경됬는지를 나타내는 더티 플레그입니다.
     // 더티 플레그가 활성화되어 있으면 상수 버퍼를 업데이트 해줘야 합니다.
     // 매 프레임 자원마다 오브젝트 상수 버퍼가 존재하기 때문에
@@ -53,6 +55,10 @@ struct ObjectConstants
 		0.0f, 0.0f, 0.0f, 1.0f);
 
 	DirectX::XMFLOAT4X4 TexTransform = GraphicsUtil::Identity4x4();
+	UINT MaterialIndex;
+	UINT ObjPad0;
+	UINT ObjPad1;
+	UINT ObjPad2;
 };
 
 struct PassConstants

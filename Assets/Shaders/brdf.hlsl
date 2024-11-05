@@ -238,9 +238,10 @@ float4 PS(VertexOut pin) : SV_Target
 {
     MaterialData matData = gMaterialData[gMaterialIndex];
     
-    float3 diffuseAlbedo = (gTextures[matData.DiffuseTexIndex].Sample(gsamAnisotropicWrap, pin.TexC) * matData.DiffuseAlbedo).xyz;
-    //float3 diffuseAlbedo = gDiffuseAlbedo;
-    //float3 diffuseAlbedo = gDiffuseMap.Sample(gsamAnisotropicWrap, pin.TexC);
+    float3 diffuseAlbedo = matData.DiffuseAlbedo.xyz;
+    if(matData.DiffuseTexIndex!=-1)
+        diffuseAlbedo *= gTextures[matData.DiffuseTexIndex].Sample(gsamAnisotropicWrap, pin.TexC);
+    
     // Interpolating normal can unnormalize it, so renormalize it.
     pin.NormalW = normalize(pin.NormalW);
 
