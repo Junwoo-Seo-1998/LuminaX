@@ -35,6 +35,8 @@ bool DemoApp::Init(HINSTANCE hinstance)
 	// 초기화 명령들을 기록하기 위해 커맨드 리스트를 리셋합니다.
 	ThrowIfFailed(mCommandList->Reset(mCommandListAlloc.Get(), nullptr));
 
+	mCamera.SetPosition(0.0f, 2.0f, -15.0f);
+
 	mBlurFilter = std::make_unique<BlurFilter>(md3dDevice.Get(),
 		mWidth,
 		mHeight,
@@ -50,7 +52,6 @@ bool DemoApp::Init(HINSTANCE hinstance)
 	BuildMaterials();
 	BuildRenderItems();
 	BuildFrameResources();
-	BuildConstantBuffers();
 	BuildPSO();
 
 	// 초기화 명령들을 실행시킵니다.
@@ -67,8 +68,8 @@ bool DemoApp::Init(HINSTANCE hinstance)
 void DemoApp::OnResize()
 {
 	Application::OnResize();
-	XMMATRIX P = XMMatrixPerspectiveFovLH(0.25f * DirectX::XM_PI, (float)mWidth/mHeight , 1.0f, 1000.0f);
-	XMStoreFloat4x4(&mProj, P);
+
+	mCamera.SetLens(0.25f * (float)std::numbers::pi, (float)mWidth / mHeight, 1.0f, 1000.0f);
 
 	if (mBlurFilter != nullptr)
 	{
@@ -247,6 +248,32 @@ void DemoApp::OnMouseMove(WPARAM btnState, int x, int y)
 	mLastMousePos.y = y;
 }
 
+bool DemoApp::CreateRtvAndDsvDescHeap()
+{
+	D3D12_DESCRIPTOR_HEAP_DESC rtvDesc;
+	rtvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+	rtvDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+	rtvDesc.NumDescriptors = SwapChainBufferCount + 6; //for dynamic cubemap
+	rtvDesc.NodeMask = 0;
+
+	D3D12_DESCRIPTOR_HEAP_DESC dsvDesc;
+	dsvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+	dsvDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+	dsvDesc.NumDescriptors = 2; //for dynamic cubemap
+	dsvDesc.NodeMask = 0;
+
+	md3dDevice->CreateDescriptorHeap(&rtvDesc, IID_PPV_ARGS(&mRtvDescHeap));
+	md3dDevice->CreateDescriptorHeap(&dsvDesc, IID_PPV_ARGS(&mDsvDescHeap));
+
+	//dsv to be used for cubemap capturing
+	mCubeDSV = CD3DX12_CPU_DESCRIPTOR_HANDLE(
+		mDsvDescHeap->GetCPUDescriptorHandleForHeapStart(),
+		1,
+		mDsvDescSize);
+
+	return true;
+}
+
 void DemoApp::LoadTextures()
 {
 	auto skyTex = std::make_unique<Texture>();
@@ -265,18 +292,13 @@ void DemoApp::LoadTextures()
 
 void DemoApp::UpdateCamera()
 {
-	// 구 좌표계를 카타시안 좌표계로 변환합니다.
-	mEyePos.x = mRadius * sinf(mPhi) * cosf(mTheta);
-	mEyePos.z = mRadius * sinf(mPhi) * sinf(mTheta);
-	mEyePos.y = mRadius * cosf(mPhi);
-
 	// 뷰 메트릭스를 계산합니다.
-	XMVECTOR pos = XMVectorSet(mEyePos.x, mEyePos.y, mEyePos.z, 1.0f);
+	XMVECTOR pos = XMVectorSet(mRadius * sinf(mPhi) * cosf(mTheta), mRadius * cosf(mPhi), mRadius * sinf(mPhi) * sinf(mTheta), 1.0f);
 	XMVECTOR target = XMVectorZero();
 	XMVECTOR up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
 
-	XMMATRIX view = XMMatrixLookAtLH(pos, target, up);
-	XMStoreFloat4x4(&mView, view);
+	mCamera.LookAt(pos, target, up);
+	mCamera.UpdateViewMatrix();
 }
 
 void DemoApp::UpdateObjectCBs()
@@ -330,8 +352,8 @@ void DemoApp::UpdateMaterialBuffer()
 
 void DemoApp::UpdateMainPassCB()
 {
-	XMMATRIX view = XMLoadFloat4x4(&mView);
-	XMMATRIX proj = XMLoadFloat4x4(&mProj);
+	XMMATRIX view = mCamera.GetView();
+	XMMATRIX proj = mCamera.GetProj();
 
 	XMMATRIX viewProj = XMMatrixMultiply(view, proj);
 	auto det = XMMatrixDeterminant(view);
@@ -349,7 +371,7 @@ void DemoApp::UpdateMainPassCB()
 	XMStoreFloat4x4(&mMainPassCB.InvProj, XMMatrixTranspose(invProj));
 	XMStoreFloat4x4(&mMainPassCB.ViewProj, XMMatrixTranspose(viewProj));
 	XMStoreFloat4x4(&mMainPassCB.InvViewProj, XMMatrixTranspose(invViewProj));
-	mMainPassCB.EyePosW = mEyePos;
+	mMainPassCB.EyePosW = mCamera.GetPosition3f();
 	mMainPassCB.RenderTargetSize = XMFLOAT2((float)mWidth, (float)mHeight);
 	mMainPassCB.RenderTargetSize = XMFLOAT2(1.0f / mWidth, 1.0f / mHeight);
 	mMainPassCB.NearZ = 1.0f;
@@ -435,29 +457,6 @@ void DemoApp::BuildDescHeaps()
 	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&mGeneralDescHeap)));
 }
 
-void DemoApp::BuildConstantBuffers()
-{
-	/*UINT passCBByteSize = (sizeof(PassConstants) + 255) & (~255);
-
-	// 마지막 세개의 디스크립터들은 매 프레임을 위한 패스 CBV입니다.
-	for (int frameIndex = 0; frameIndex < GraphicsUtil::gNumFrameResources; ++frameIndex)
-	{
-		auto passCB = mFrameResources[frameIndex]->PassCB->Resource();
-
-
-		D3D12_GPU_VIRTUAL_ADDRESS passCBAddr = passCB->GetGPUVirtualAddress();
-
-		int heapIndex = mPassCbvOffset + frameIndex;
-		auto handle = CD3DX12_CPU_DESCRIPTOR_HANDLE(mCbvHeap->GetCPUDescriptorHandleForHeapStart());
-		handle.Offset(heapIndex, mCbvSrvUavDescSize);
-
-		D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc;
-		cbvDesc.BufferLocation = passCBAddr;
-		cbvDesc.SizeInBytes = passCBByteSize;
-		md3dDevice->CreateConstantBufferView(&cbvDesc, handle);
-	}*/
-}
-
 void DemoApp::BuildDescViews()
 {
 	CD3DX12_CPU_DESCRIPTOR_HANDLE handle(mGeneralDescHeap->GetCPUDescriptorHandleForHeapStart());
@@ -488,6 +487,39 @@ void DemoApp::BuildDescViews()
 		CD3DX12_CPU_DESCRIPTOR_HANDLE(mGeneralDescHeap->GetCPUDescriptorHandleForHeapStart(), (int)mTextures.size(), mCbvSrvUavDescSize),
 		CD3DX12_GPU_DESCRIPTOR_HANDLE(mGeneralDescHeap->GetGPUDescriptorHandleForHeapStart(), (int)mTextures.size(), mCbvSrvUavDescSize),
 		mCbvSrvUavDescSize);
+}
+
+void DemoApp::BuildCubeDepthStencil()
+{
+	D3D12_RESOURCE_DESC depthStencilDesc;
+	depthStencilDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+	depthStencilDesc.Alignment = 0;
+	depthStencilDesc.Width = CubeMapSize;
+	depthStencilDesc.Height = CubeMapSize;
+	depthStencilDesc.DepthOrArraySize = 1;
+	depthStencilDesc.MipLevels = 1;
+	depthStencilDesc.Format = mDepthStencilFormat;
+	depthStencilDesc.SampleDesc.Count = 1;
+	depthStencilDesc.SampleDesc.Quality = 0;
+	depthStencilDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+	depthStencilDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+	D3D12_CLEAR_VALUE optClear;
+	optClear.Format = mDepthStencilFormat;
+	optClear.DepthStencil.Depth = 1.0f;
+	optClear.DepthStencil.Stencil = 0;
+	auto heapProperty = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+	ThrowIfFailed(md3dDevice->CreateCommittedResource(
+		&heapProperty,
+		D3D12_HEAP_FLAG_NONE,
+		&depthStencilDesc,
+		D3D12_RESOURCE_STATE_COMMON,
+		&optClear,
+		IID_PPV_ARGS(mCubeDepthStencilBuffer.GetAddressOf())));
+
+	md3dDevice->CreateDepthStencilView(mCubeDepthStencilBuffer.Get(), nullptr, mCubeDSV);
+	auto transition = CD3DX12_RESOURCE_BARRIER::Transition(mCubeDepthStencilBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+	mCommandList->ResourceBarrier(1, &transition);
 }
 
 void DemoApp::BuildRootSignature()
@@ -785,7 +817,7 @@ void DemoApp::BuildFrameResources()
 	for (int i = 0; i < GraphicsUtil::gNumFrameResources; ++i)
 	{
 		mFrameResources.push_back(std::make_unique<FrameResource>(
-			md3dDevice.Get(), 1, (UINT)mAllRitems.size()));
+			md3dDevice.Get(), 1, (UINT)mAllRitems.size(), (UINT)mMaterials.size()));
 	}
 }
 

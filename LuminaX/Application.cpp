@@ -174,16 +174,16 @@ void Application::OnResize()
 	FlushCommandQueue();
 	mCommandList->Reset(mCommandListAlloc.Get(), nullptr);
 
-	for (int i = 0; i < 2; ++i)
+	for (int i = 0; i < SwapChainBufferCount; ++i)
 		mSwapChainBuffer[i].Reset();
 	mDepthStencilBuffer.Reset();
 
-	mSwapChain->ResizeBuffers(2, mWidth, mHeight, mBackBufferFormat, DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH);
+	mSwapChain->ResizeBuffers(SwapChainBufferCount, mWidth, mHeight, mBackBufferFormat, DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH);
 
 	mCurrBackBuffer = 0;
 
 	CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHeapHandle(mRtvDescHeap->GetCPUDescriptorHandleForHeapStart());
-	for(UINT i=0; i<2; ++i)
+	for(UINT i=0; i< SwapChainBufferCount; ++i)
 	{
 		mSwapChain->GetBuffer(i, IID_PPV_ARGS(&mSwapChainBuffer[i]));
 		md3dDevice->CreateRenderTargetView(mSwapChainBuffer[i].Get(), nullptr, rtvHeapHandle);
@@ -345,7 +345,7 @@ bool Application::CreateSwapChain()
 	swapChainDesc.SampleDesc.Quality = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
 	swapChainDesc.SampleDesc.Count = m4xMsaaState ? 4 : 1;
 	swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-	swapChainDesc.BufferCount = 2;//double buffering
+	swapChainDesc.BufferCount = SwapChainBufferCount;//double buffering
 	swapChainDesc.OutputWindow = mhMainWindow;
 	swapChainDesc.Windowed = true;
 	swapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
@@ -361,7 +361,7 @@ bool Application::CreateRtvAndDsvDescHeap()
 	D3D12_DESCRIPTOR_HEAP_DESC rtvDesc;
 	rtvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
 	rtvDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-	rtvDesc.NumDescriptors = 2;
+	rtvDesc.NumDescriptors = SwapChainBufferCount;
 	rtvDesc.NodeMask = 0;
 
 	D3D12_DESCRIPTOR_HEAP_DESC dsvDesc;

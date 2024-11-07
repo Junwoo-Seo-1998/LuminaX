@@ -13,7 +13,7 @@ struct MaterialData;
 class FrameResource
 {
 public:
-	FrameResource(ID3D12Device* device, UINT passCount, UINT objectCount);
+	FrameResource(ID3D12Device* device, UINT passCount, UINT objectCount, UINT materialCount);
 	FrameResource(const FrameResource& right) = delete;
 	FrameResource& operator=(const FrameResource& right) = delete;
 

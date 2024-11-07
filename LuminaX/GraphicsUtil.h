@@ -2,6 +2,7 @@
 #include <DirectXMath.h>
 #include <wrl/client.h>
 #include "directx/d3d12.h"
+#include "directx/d3dx12.h"
 #include <string>
 #include <unordered_map>
 

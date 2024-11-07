@@ -6,6 +6,7 @@
 class Application
 {
 public:
+	static constexpr int SwapChainBufferCount = 2;
 	Application();
 	~Application();
 	static Application* Get();
@@ -30,7 +31,7 @@ protected:
 	bool CreateDevice();
 	bool CreateCommandObjects();
 	bool CreateSwapChain();
-	bool CreateRtvAndDsvDescHeap();
+	virtual bool CreateRtvAndDsvDescHeap();
 
 	ID3D12Resource* CurrentBackBuffer();
 	D3D12_CPU_DESCRIPTOR_HANDLE GetCurrentBackBufferView();
@@ -49,7 +50,8 @@ protected:
 
 	UINT64 mCurrentFence = 0;
 	int mCurrBackBuffer = 0;
-	Microsoft::WRL::ComPtr<ID3D12Resource> mSwapChainBuffer[2];
+
+	Microsoft::WRL::ComPtr<ID3D12Resource> mSwapChainBuffer[SwapChainBufferCount];
 	Microsoft::WRL::ComPtr<ID3D12Resource> mDepthStencilBuffer;
 
 	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> mRtvDescHeap;

@@ -8,7 +8,7 @@
 #include "FrameResource.h"
 #include "GraphicsUtil.h"
 #include "BlurFilter.h"
-
+#include "Camera.h"
 struct MeshGeometry;
 
 struct RenderItem
@@ -118,6 +118,8 @@ private:
 	virtual void OnMouseUp(WPARAM btnState, int x, int y) override;
 	virtual void OnMouseMove(WPARAM btnState, int x, int y) override;
 
+	virtual bool CreateRtvAndDsvDescHeap() override;
+
 	void LoadTextures();
 	void UpdateCamera();
 	void UpdateObjectCBs();
@@ -127,8 +129,8 @@ private:
 	std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> GetStaticSamplers();
 
 	void BuildDescHeaps();
-	void BuildConstantBuffers();
 	void BuildDescViews();
+	void BuildCubeDepthStencil();
 	void BuildRootSignature();
 	void BuildPostProcessRootSignature();
 	void BuildShaderAndInputLayout();
@@ -171,12 +173,13 @@ private:
 	std::unordered_map<std::string, Microsoft::WRL::ComPtr<ID3DBlob>> mShaders;
 	std::unordered_map<std::string, Microsoft::WRL::ComPtr<ID3D12PipelineState>> mPSOs;
 
+	CD3DX12_CPU_DESCRIPTOR_HANDLE mCubeDSV;
+	Microsoft::WRL::ComPtr<ID3D12Resource> mCubeDepthStencilBuffer;
+	const UINT CubeMapSize = 512;
+
 	std::unique_ptr<BlurFilter> mBlurFilter;
 
-
-	DirectX::XMFLOAT3 mEyePos = { 0.0f, 0.0f, 0.0f };
-	DirectX::XMFLOAT4X4 mView = GraphicsUtil::Identity4x4();
-	DirectX::XMFLOAT4X4 mProj = GraphicsUtil::Identity4x4();
+	Camera mCamera;
 
 	float mTheta = 1.5f * DirectX::XM_PI;
 	float mPhi = 0.2f * DirectX::XM_PI;
