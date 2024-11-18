@@ -37,6 +37,10 @@ bool DemoApp::Init(HINSTANCE hinstance)
 
 	mCamera.SetPosition(0.0f, 2.0f, -15.0f);
 
+	BuildCubeFaceCamera(0.f, 0.f, 0.f);
+	mDynamicCubeMap = std::make_unique<CubeRenderTarget>(md3dDevice.Get(),
+		CubeMapSize, CubeMapSize, DXGI_FORMAT_R8G8B8A8_UNORM);
+
 	mBlurFilter = std::make_unique<BlurFilter>(md3dDevice.Get(),
 		mWidth,
 		mHeight,
@@ -45,6 +49,7 @@ bool DemoApp::Init(HINSTANCE hinstance)
 	LoadTextures();
 	BuildDescHeaps();
 	BuildDescViews();
+	BuildCubeDepthStencil();
 	BuildRootSignature();
 	BuildPostProcessRootSignature();
 	BuildShaderAndInputLayout();
@@ -53,6 +58,8 @@ bool DemoApp::Init(HINSTANCE hinstance)
 	BuildRenderItems();
 	BuildFrameResources();
 	BuildPSO();
+	mGeneralFrameResource = std::make_unique<FrameResource>(
+		md3dDevice.Get(), 6, 1, 1);
 
 	// 초기화 명령들을 실행시킵니다.
 	ThrowIfFailed(mCommandList->Close());
@@ -61,6 +68,109 @@ bool DemoApp::Init(HINSTANCE hinstance)
 
 	// 초기화가 종료될 때가지 기다립니다.
 	FlushCommandQueue();
+
+
+	
+
+	if(true)
+	{
+		for (int i = 0; i < 6; ++i)
+		{
+			PassConstants cubeFacePassCB = mMainPassCB;
+
+			XMMATRIX view = mCubeMapCamera[i].GetView();
+			XMMATRIX proj = mCubeMapCamera[i].GetProj();
+
+			XMMATRIX viewProj = XMMatrixMultiply(view, proj);
+			auto det = XMMatrixDeterminant(view);
+			XMMATRIX invView = XMMatrixInverse(&det, view);
+			det = XMMatrixDeterminant(proj);
+			XMMATRIX invProj = XMMatrixInverse(&det, proj);
+			det = XMMatrixDeterminant(viewProj);
+			XMMATRIX invViewProj = XMMatrixInverse(&det, viewProj);
+
+			XMStoreFloat4x4(&cubeFacePassCB.View, XMMatrixTranspose(view));
+			XMStoreFloat4x4(&cubeFacePassCB.InvView, XMMatrixTranspose(invView));
+			XMStoreFloat4x4(&cubeFacePassCB.Proj, XMMatrixTranspose(proj));
+			XMStoreFloat4x4(&cubeFacePassCB.InvProj, XMMatrixTranspose(invProj));
+			XMStoreFloat4x4(&cubeFacePassCB.ViewProj, XMMatrixTranspose(viewProj));
+			XMStoreFloat4x4(&cubeFacePassCB.InvViewProj, XMMatrixTranspose(invViewProj));
+			cubeFacePassCB.EyePosW = mCubeMapCamera[i].GetPosition3f();
+			cubeFacePassCB.RenderTargetSize = XMFLOAT2((float)CubeMapSize, (float)CubeMapSize);
+			cubeFacePassCB.InvRenderTargetSize = XMFLOAT2(1.0f / CubeMapSize, 1.0f / CubeMapSize);
+
+			auto currPassCB = mGeneralFrameResource->PassCB.get();
+
+			// Cube map pass cbuffers are stored in elements 1-6.
+			currPassCB->CopyData(i, cubeFacePassCB);
+		}
+
+
+		// 초기화 명령들을 기록하기 위해 커맨드 리스트를 리셋합니다.
+		ThrowIfFailed(mCommandList->Reset(mGeneralFrameResource->CmdListAlloc.Get(), nullptr));
+		auto viewport = mDynamicCubeMap->Viewport();
+		mCommandList->RSSetViewports(1, &viewport);
+		auto rect = mDynamicCubeMap->ScissorRect();
+		mCommandList->RSSetScissorRects(1, &rect);
+
+		auto toTarget = CD3DX12_RESOURCE_BARRIER::Transition(mDynamicCubeMap->Resource(),
+			D3D12_RESOURCE_STATE_GENERIC_READ,
+			D3D12_RESOURCE_STATE_RENDER_TARGET);
+		// RENDER_TARGET으로 변경합니다.
+		mCommandList->ResourceBarrier(1, &toTarget);
+
+		UINT passCBByteSize = GraphicsUtil::CalcConstantBufferByteSize(sizeof(PassConstants));
+
+		ID3D12DescriptorHeap* descriptorHeaps[] = { mGeneralDescHeap.Get() };
+		mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
+
+		mCommandList->SetGraphicsRootSignature(mRootSig.Get());
+
+		auto matBuffer = mGeneralFrameResource->MaterialBuffer->Resource();
+		mCommandList->SetGraphicsRootShaderResourceView(2, matBuffer->GetGPUVirtualAddress());
+
+		CD3DX12_GPU_DESCRIPTOR_HANDLE skyTexDescriptor(mGeneralDescHeap->GetGPUDescriptorHandleForHeapStart());
+		skyTexDescriptor.Offset((int)mTextures.size()-1, mCbvSrvUavDescSize);
+		mCommandList->SetGraphicsRootDescriptorTable(3, skyTexDescriptor);
+
+		mCommandList->SetGraphicsRootDescriptorTable(4, mGeneralDescHeap->GetGPUDescriptorHandleForHeapStart());
+
+		// 큐브맵 각 면에 대해:
+		for (int i = 0; i < 6; ++i)
+		{
+			// 백버퍼와 뎁스 버퍼를 초기화 합니다.
+			mCommandList->ClearRenderTargetView(mDynamicCubeMap->Rtv(i), Colors::BlueViolet, 0, nullptr);
+			mCommandList->ClearDepthStencilView(mCubeDSV, D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
+
+			// 렌더링 하려는 큐브맵의 i번째 렌더타겟을 설정합니다.
+			auto handle = mDynamicCubeMap->Rtv(i);
+			mCommandList->OMSetRenderTargets(1, &handle, true, &mCubeDSV);
+
+			// 이 큐브맵 면에 해당하는 상수 버퍼를 바인딩합니다.
+			auto passCB = mGeneralFrameResource->PassCB->Resource();
+			D3D12_GPU_VIRTUAL_ADDRESS passCBAddress = passCB->GetGPUVirtualAddress() + (i) * passCBByteSize;
+			mCommandList->SetGraphicsRootConstantBufferView(1, passCBAddress);
+
+			//DrawRenderItems(mCommandList.Get(), mRitemLayer[(int)RenderLayer::Opaque]);
+
+			mCommandList->SetPipelineState(mPSOs["diffuseIBL"].Get());
+			DrawRenderItems(mCommandList.Get(), mRitemLayer[(int)RenderLayer::Sky], mGeneralFrameResource->ObjectCB->Resource());
+
+			//mCommandList->SetPipelineState(mPSOs["opaque"].Get());
+		}
+
+		// GENERIC_READ로 변경합니다.
+		auto toRead = CD3DX12_RESOURCE_BARRIER::Transition(mDynamicCubeMap->Resource(),
+			D3D12_RESOURCE_STATE_RENDER_TARGET,
+			D3D12_RESOURCE_STATE_GENERIC_READ);
+		mCommandList->ResourceBarrier(1, &toRead);
+
+		// 초기화 명령들을 실행시킵니다.
+		ThrowIfFailed(mCommandList->Close());
+		ID3D12CommandList* cmdLists[] = { mCommandList.Get() };
+		mCommandQueue->ExecuteCommandLists(1, cmdLists);
+		FlushCommandQueue();
+	}
 
 	return true;
 }
@@ -150,7 +260,7 @@ void DemoApp::Draw()
 	mCommandList->SetGraphicsRootShaderResourceView(2, matBuffer->GetGPUVirtualAddress());
 
 	CD3DX12_GPU_DESCRIPTOR_HANDLE skyTexDescriptor(mGeneralDescHeap->GetGPUDescriptorHandleForHeapStart());
-	skyTexDescriptor.Offset((int)mTextures.size() - 1, mCbvSrvUavDescSize);
+	skyTexDescriptor.Offset((int)mDynamicTexHeapIndex, mCbvSrvUavDescSize);
 	mCommandList->SetGraphicsRootDescriptorTable(3, skyTexDescriptor);
 
 	mCommandList->SetGraphicsRootDescriptorTable(4, mGeneralDescHeap->GetGPUDescriptorHandleForHeapStart());
@@ -445,13 +555,51 @@ std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> DemoApp::GetStaticSamplers()
 		anisotropicWrap, anisotropicClamp };
 }
 
+void DemoApp::BuildCubeFaceCamera(float x, float y, float z)
+{
+	XMFLOAT3 center(x, y, z);
+	XMFLOAT3 worldUp(0.0, 1.0f, 0.0f);
+
+	// 각 좌표축으로 향하는 시선 벡터입니다.
+	XMFLOAT3 targets[6] =
+	{
+		XMFLOAT3(x + 1.0f, y,        z), // +X
+		XMFLOAT3(x - 1.0f, y,        z), // -X
+		XMFLOAT3(x,        y + 1.0f, z), // +Y
+		XMFLOAT3(x,        y - 1.0f, z), // -Y
+		XMFLOAT3(x,        y,        z + 1.0f), // +Z
+		XMFLOAT3(x,        y,        z - 1.0f)  // -Z
+	};
+
+	// +Y/-Y 방향인 경우 다른 업 벡터를 사용합니다.
+	XMFLOAT3 ups[6] =
+	{
+		XMFLOAT3(0.0f, 1.0f,  0.0f), // +X
+		XMFLOAT3(0.0f, 1.0f,  0.0f), // -X
+		XMFLOAT3(0.0f, 0.0f, -1.0f), // +Y
+		XMFLOAT3(0.0f, 0.0f, +1.0f), // -Y
+		XMFLOAT3(0.0f, 1.0f,  0.0f), // +Z
+		XMFLOAT3(0.0f, 1.0f,  0.0f)  // -Z
+	};
+
+	for (int i = 0; i < 6; ++i)
+	{
+		mCubeMapCamera[i].LookAt(center, targets[i], ups[i]);
+		mCubeMapCamera[i].SetLens(0.5 * XM_PI, 1.0f, 0.1f, 1000.0f);
+		mCubeMapCamera[i].UpdateViewMatrix();
+	}
+
+}
+
 void DemoApp::BuildDescHeaps()
 {
+	//sky cube map is included
 	const UINT textureDescriptorCount = (UINT)mTextures.size();
+	const UINT dynamicCubeMapDesriptorCount = (UINT)1;
 	const UINT blurDescriptorCount = (UINT)4;
 
 	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
-	srvHeapDesc.NumDescriptors = textureDescriptorCount + blurDescriptorCount;
+	srvHeapDesc.NumDescriptors = textureDescriptorCount + dynamicCubeMapDesriptorCount + blurDescriptorCount;
 	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&mGeneralDescHeap)));
@@ -481,11 +629,28 @@ void DemoApp::BuildDescViews()
 	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
 	srvDesc.Format = mTextures["skyTex"]->Resource->GetDesc().Format;
 	md3dDevice->CreateShaderResourceView(mTextures["skyTex"]->Resource.Get(), &srvDesc, handle);
-	mTextures["skyTex"]->heapIndex = index;
+	mTextures["skyTex"]->heapIndex = index++;
+
+
+	// 스왑 체인 디스크립터 다음에 다이나믹 큐브맵 RTV가 생성됩니다,
+	int rtvOffset = SwapChainBufferCount;
+
+	CD3DX12_CPU_DESCRIPTOR_HANDLE cubeRtvHandles[6];
+	for (int i = 0; i < 6; ++i)
+		cubeRtvHandles[i] = CD3DX12_CPU_DESCRIPTOR_HANDLE(mRtvDescHeap->GetCPUDescriptorHandleForHeapStart(), rtvOffset + i, mRtvDescSize);
+
+
+	// 하늘 SRV다음에 다이나믹 큐브맵 SRV가 생성됩니다.
+	mDynamicTexHeapIndex = index++;
+	mDynamicCubeMap->BuildDescriptors(
+		CD3DX12_CPU_DESCRIPTOR_HANDLE(mGeneralDescHeap->GetCPUDescriptorHandleForHeapStart(), mDynamicTexHeapIndex, mCbvSrvUavDescSize),
+		CD3DX12_GPU_DESCRIPTOR_HANDLE(mGeneralDescHeap->GetGPUDescriptorHandleForHeapStart(), mDynamicTexHeapIndex, mCbvSrvUavDescSize),
+		cubeRtvHandles);
+
 
 	mBlurFilter->BuildDescriptors(
-		CD3DX12_CPU_DESCRIPTOR_HANDLE(mGeneralDescHeap->GetCPUDescriptorHandleForHeapStart(), (int)mTextures.size(), mCbvSrvUavDescSize),
-		CD3DX12_GPU_DESCRIPTOR_HANDLE(mGeneralDescHeap->GetGPUDescriptorHandleForHeapStart(), (int)mTextures.size(), mCbvSrvUavDescSize),
+		CD3DX12_CPU_DESCRIPTOR_HANDLE(mGeneralDescHeap->GetCPUDescriptorHandleForHeapStart(), (int)index, mCbvSrvUavDescSize),
+		CD3DX12_GPU_DESCRIPTOR_HANDLE(mGeneralDescHeap->GetGPUDescriptorHandleForHeapStart(), (int)index, mCbvSrvUavDescSize),
 		mCbvSrvUavDescSize);
 }
 
@@ -590,6 +755,9 @@ void DemoApp::BuildShaderAndInputLayout()
 
 	mShaders["skyVS"] = GraphicsUtil::CompileShader(L"./Assets/Shaders/Sky.hlsl", nullptr, "VS", "vs_5_1");
 	mShaders["skyPS"] = GraphicsUtil::CompileShader(L"./Assets/Shaders/Sky.hlsl", nullptr, "PS", "ps_5_1");
+
+	mShaders["diffuseIBLVS"] = GraphicsUtil::CompileShader(L"./Assets/Shaders/diffuseIBL.hlsl", nullptr, "VS", "vs_5_1");
+	mShaders["diffuseIBLPS"] = GraphicsUtil::CompileShader(L"./Assets/Shaders/diffuseIBL.hlsl", nullptr, "PS", "ps_5_1");
 
 	mShaders["blurH_CS"] = GraphicsUtil::CompileShader(L"./Assets/Shaders/blur.hlsl", nullptr, "HorzBlurCS", "cs_5_1");
 	mShaders["blurV_CS"] = GraphicsUtil::CompileShader(L"./Assets/Shaders/blur.hlsl", nullptr, "VertBlurCS", "cs_5_1");
@@ -787,6 +955,27 @@ void DemoApp::BuildPSO()
 		ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&skyPsoDesc, IID_PPV_ARGS(&mPSOs["sky"])));
 	}
 
+	//ibl map
+	{
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC diffuseIBLPsoDesc = opaquePSODesc;
+
+		// 카메라에서 구의 안쪽을 렌더링하기 때문에 컬링을 꺼줍니다.
+		diffuseIBLPsoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+
+		diffuseIBLPsoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+		diffuseIBLPsoDesc.VS =
+		{
+			reinterpret_cast<BYTE*>(mShaders["diffuseIBLVS"]->GetBufferPointer()),
+			mShaders["diffuseIBLVS"]->GetBufferSize()
+		};
+		diffuseIBLPsoDesc.PS =
+		{
+			reinterpret_cast<BYTE*>(mShaders["diffuseIBLPS"]->GetBufferPointer()),
+			mShaders["diffuseIBLPS"]->GetBufferSize()
+		};
+		ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&diffuseIBLPsoDesc, IID_PPV_ARGS(&mPSOs["diffuseIBL"])));
+	}
+
 
 	//blur 
 	{
@@ -970,11 +1159,12 @@ void DemoApp::BuildRenderItems()
 	}
 }
 
-void DemoApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems)
+void DemoApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems, ID3D12Resource* objectCB)
 {
 	UINT objCBByteSize = GraphicsUtil::CalcConstantBufferByteSize(sizeof(ObjectConstants));
 
-	auto objCB = mCurrFrameResource->ObjectCB->Resource();
+	ID3D12Resource* objCB = (objectCB == nullptr) ? mCurrFrameResource->ObjectCB->Resource() : objectCB;
+
 	// 각 렌더 항목에 대해서...
 	for (size_t i = 0; i < ritems.size(); ++i)
 	{
@@ -991,4 +1181,8 @@ void DemoApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vec
 
 		cmdList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
 	}
+}
+
+void DemoApp::BakeIrradianceMap()
+{
 }

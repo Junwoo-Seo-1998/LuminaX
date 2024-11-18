@@ -9,6 +9,7 @@
 #include "GraphicsUtil.h"
 #include "BlurFilter.h"
 #include "Camera.h"
+#include "CubeRenderTarget.h"
 struct MeshGeometry;
 
 struct RenderItem
@@ -128,6 +129,8 @@ private:
 
 	std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> GetStaticSamplers();
 
+	void BuildCubeFaceCamera(float x, float y, float z);
+
 	void BuildDescHeaps();
 	void BuildDescViews();
 	void BuildCubeDepthStencil();
@@ -140,18 +143,22 @@ private:
 	void BuildMaterials();
 	void BuildRenderItems();
 
-	void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems);
+	void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems, ID3D12Resource* objectCB = nullptr);
+	void BakeIrradianceMap();
 
 
 private:
 	std::vector<std::unique_ptr<FrameResource>> mFrameResources;
 	FrameResource* mCurrFrameResource = nullptr;
+	//to be used for baking 
+	std::unique_ptr<FrameResource> mGeneralFrameResource;
 	int mCurrFrameResourceIndex = 0;
 
 	PassConstants mMainPassCB;
 	UINT mPassCbvOffset = 0;
 	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> mGeneralDescHeap;
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> mRootSig;
+	Microsoft::WRL::ComPtr<ID3D12RootSignature> mmDynamicCubeMapRootSig;
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> mPostProcessRootSignature;
 
 	std::vector<D3D12_INPUT_ELEMENT_DESC> mInputLayout;
@@ -172,6 +179,8 @@ private:
 	std::unordered_map<std::string, std::unique_ptr<Texture>> mTextures;
 	std::unordered_map<std::string, Microsoft::WRL::ComPtr<ID3DBlob>> mShaders;
 	std::unordered_map<std::string, Microsoft::WRL::ComPtr<ID3D12PipelineState>> mPSOs;
+	std::unique_ptr<CubeRenderTarget> mDynamicCubeMap = nullptr;
+	int mDynamicTexHeapIndex = -1;
 
 	CD3DX12_CPU_DESCRIPTOR_HANDLE mCubeDSV;
 	Microsoft::WRL::ComPtr<ID3D12Resource> mCubeDepthStencilBuffer;
@@ -180,6 +189,7 @@ private:
 	std::unique_ptr<BlurFilter> mBlurFilter;
 
 	Camera mCamera;
+	Camera mCubeMapCamera[6];
 
 	float mTheta = 1.5f * DirectX::XM_PI;
 	float mPhi = 0.2f * DirectX::XM_PI;

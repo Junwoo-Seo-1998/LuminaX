@@ -16,18 +16,18 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(directxtk12)
 
-set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
-set(ASSIMP_INSTALL OFF CACHE BOOL "" FORCE)
-set(ASSIMP_BUILD_ALL_EXPORTERS_BY_DEFAULT OFF CACHE BOOL "" FORCE)
-set(ASSIMP_NO_EXPORT OFF CACHE BOOL "" FORCE)
-set(ASSIMP_BUILD_ASSIMP_VIEW OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(
-  assimp
-  GIT_REPOSITORY "https://github.com/assimp/assimp.git"
-  GIT_SHALLOW 1
-)
-FetchContent_MakeAvailable(assimp)
+#set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+#set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
+#set(ASSIMP_INSTALL OFF CACHE BOOL "" FORCE)
+#set(ASSIMP_BUILD_ALL_EXPORTERS_BY_DEFAULT OFF CACHE BOOL "" FORCE)
+#set(ASSIMP_NO_EXPORT OFF CACHE BOOL "" FORCE)
+#set(ASSIMP_BUILD_ASSIMP_VIEW OFF CACHE BOOL "" FORCE)
+#FetchContent_Declare(
+#  assimp
+#  GIT_REPOSITORY "https://github.com/assimp/assimp.git"
+#  GIT_SHALLOW 1
+#)
+#FetchContent_MakeAvailable(assimp)
 
 
 FetchContent_Declare(imgui_external
@@ -66,7 +66,7 @@ file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS
 add_executable(LuminaX ${SRC_FILES})
 set_target_properties(LuminaX PROPERTIES WIN32_EXECUTABLE TRUE)
 
-target_link_libraries(LuminaX PRIVATE Microsoft::DirectX-Headers DirectXTK12 assimp dxguid.lib d3d12.lib d3dcompiler.lib dxgi.lib imgui)
+target_link_libraries(LuminaX PRIVATE Microsoft::DirectX-Headers DirectXTK12 dxguid.lib d3d12.lib d3dcompiler.lib dxgi.lib imgui)
 target_compile_definitions(LuminaX PUBLIC _UNICODE UNICODE _WIN32_WINNT=0x0A00)
 
 #file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/Shaders DESTINATION ${CMAKE_BINARY_DIR}/LuminaX)
