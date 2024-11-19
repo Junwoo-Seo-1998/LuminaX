@@ -36,9 +36,11 @@ struct MaterialData
 };
 
 TextureCube gCubeMap : register(t0);
-Texture2D gTextures[4] : register(t1);
+TextureCube gIrradianceMap : register(t1);
 
-StructuredBuffer<MaterialData> gMaterialData : register(t0, space1);
+Texture2D gTextures[4] : register(t1, space1);
+
+StructuredBuffer<MaterialData> gMaterialData : register(t0, space2);
 
 // Constant data that varies per frame.
 cbuffer cbPerObject : register(b0)

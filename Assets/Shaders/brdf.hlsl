@@ -97,6 +97,10 @@ float3 fresnelSchlick(float VdotH, float3 F0)
     return F0 + (1.0 - F0) * pow(clamp(1.0 - VdotH, 0.0, 1.0), 5.0);
 }
 
+float3 fresnelSchlickRoughness(float cosTheta, float3 F0, float roughness)
+{
+    return F0 + (max((float3) (1.0 - roughness), F0) -F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
 
 struct Material
 {
@@ -150,10 +154,16 @@ float3 BRDF(Light gLights[MaxLights], Material mat,
         float NdotL = max(dot(normal, lightVec), 0.0f);                
         Lo += (kD * mat.DiffuseAlbedo / PI + specular) * radiance * NdotL; 
     }
-
-    //not for now
+    
+    // ambient lighting (we now use IBL as the ambient term)
     //float3 ambient = float3(0.03) * mat.DiffuseAlbedo * ao;
-    float3 ambient = float3(0.03f, 0.03f, 0.03f) * mat.DiffuseAlbedo;
+    float3 F = fresnelSchlickRoughness(max(dot(normal, view), 0.0f), mat.FresnelR0, mat.Roughness);
+    float3 kS = F;
+    float3 kD = float3(1.0f, 1.0f, 1.0f) - kS;
+    kD *= 1.0 - mat.Metallic;
+    float3 irradiance = gIrradianceMap.Sample(gsamLinearWrap, normal).rgb;
+    float3 diffuse = irradiance * mat.DiffuseAlbedo;
+    float3 ambient = (kD * diffuse); // * ao;
     float3 color = ambient + Lo;
     return color;
 }

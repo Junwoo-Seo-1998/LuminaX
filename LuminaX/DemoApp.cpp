@@ -260,7 +260,7 @@ void DemoApp::Draw()
 	mCommandList->SetGraphicsRootShaderResourceView(2, matBuffer->GetGPUVirtualAddress());
 
 	CD3DX12_GPU_DESCRIPTOR_HANDLE skyTexDescriptor(mGeneralDescHeap->GetGPUDescriptorHandleForHeapStart());
-	skyTexDescriptor.Offset((int)mDynamicTexHeapIndex, mCbvSrvUavDescSize);
+	skyTexDescriptor.Offset((int)mTextures.size()-1, mCbvSrvUavDescSize);
 	mCommandList->SetGraphicsRootDescriptorTable(3, skyTexDescriptor);
 
 	mCommandList->SetGraphicsRootDescriptorTable(4, mGeneralDescHeap->GetGPUDescriptorHandleForHeapStart());
@@ -692,16 +692,16 @@ void DemoApp::BuildRootSignature()
 	CD3DX12_ROOT_PARAMETER slotRootParams[5];
 
 	//texture
-	CD3DX12_DESCRIPTOR_RANGE texSky;
-	texSky.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0);
+	CD3DX12_DESCRIPTOR_RANGE cubeMaps;
+	cubeMaps.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0, 0);
 
 	CD3DX12_DESCRIPTOR_RANGE tex;
-	tex.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 1, 0);
+	tex.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 1, 1);
 
 	slotRootParams[0].InitAsConstantBufferView(0);
 	slotRootParams[1].InitAsConstantBufferView(1);
-	slotRootParams[2].InitAsShaderResourceView(0, 1);
-	slotRootParams[3].InitAsDescriptorTable(1, &texSky, D3D12_SHADER_VISIBILITY_PIXEL);
+	slotRootParams[2].InitAsShaderResourceView(0, 2);
+	slotRootParams[3].InitAsDescriptorTable(1, &cubeMaps, D3D12_SHADER_VISIBILITY_PIXEL);
 	slotRootParams[4].InitAsDescriptorTable(1, &tex, D3D12_SHADER_VISIBILITY_PIXEL);
 
 	auto staticSamplers = GetStaticSamplers();
